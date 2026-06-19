@@ -34,17 +34,20 @@ def generar_token(payload: dict) -> str:
 
 
 def login(nombre_usuario: str, contrasena: str, db: Client) -> dict:
-    # 1. Buscar usuario SIN join
-    respuesta = (
-        db.table("usuarios")
-        .select("id, nombre_completo, nombre_usuario, contrasena_hash, activo, sucursal_id, rol_id")
-        .eq("nombre_usuario", nombre_usuario)
-        .eq("activo", True)
-        .single()
-        .execute()
-    )
+    # 1. Buscar usuario
+    try:
+        respuesta = (
+            db.table("usuarios")
+            .select("id, nombre_completo, nombre_usuario, contrasena_hash, activo, sucursal_id, rol_id")
+            .eq("nombre_usuario", nombre_usuario)
+            .eq("activo", True)
+            .single()
+            .execute()
+        )
+        usuario = respuesta.data
+    except Exception:
+        raise ErrorSesionInvalida()
 
-    usuario = respuesta.data
     if not usuario:
         raise ErrorSesionInvalida()
 
@@ -53,21 +56,61 @@ def login(nombre_usuario: str, contrasena: str, db: Client) -> dict:
         raise ErrorSesionInvalida()
 
     # 3. Buscar permisos del rol por separado
-    respuesta_rol = (
-        db.table("roles")
-        .select(
-            "perm_inventario_entrada, perm_inventario_ajuste, perm_kardex, "
-            "perm_corte_caja, perm_modificar_precios, perm_cancelar_tickets, "
-            "perm_clientes, perm_descuentos, perm_reportes, perm_exportar, "
-            "perm_promociones, perm_administrar"
+    try:
+        respuesta_rol = (
+            db.table("roles")
+            .select(
+                "perm_inventario_entrada, perm_inventario_ajuste, perm_kardex, "
+                "perm_corte_caja, perm_modificar_precios, perm_cancelar_tickets, "
+                "perm_clientes, perm_descuentos, perm_reportes, perm_exportar, "
+                "perm_promociones, perm_administrar"
+            )
+            .eq("id", usuario["rol_id"])
+            .single()
+            .execute()
         )
-        .eq("id", usuario["rol_id"])
-        .single()
-        .execute()
-    )
+        rol = respuesta_rol.data
+    except Exception:
+        raise ErrorSesionInvalida()
 
-    rol = respuesta_rol.data
     if not rol:
         raise ErrorSesionInvalida()
 
-    # --- resto del código igual ---
+    # 4. Construir payload del JWT
+    payload = {
+        "usuario_id": str(usuario["id"]),
+        "nombre_usuario": usuario["nombre_usuario"],
+        "nombre_completo": usuario["nombre_completo"],
+        "sucursal_id": str(usuario["sucursal_id"]),
+        "rol_id": str(usuario["rol_id"]),
+        "perm_inventario_entrada": rol["perm_inventario_entrada"],
+        "perm_inventario_ajuste": rol["perm_inventario_ajuste"],
+        "perm_kardex": rol["perm_kardex"],
+        "perm_corte_caja": rol["perm_corte_caja"],
+        "perm_modificar_precios": rol["perm_modificar_precios"],
+        "perm_cancelar_tickets": rol["perm_cancelar_tickets"],
+        "perm_clientes": rol["perm_clientes"],
+        "perm_descuentos": rol["perm_descuentos"],
+        "perm_reportes": rol["perm_reportes"],
+        "perm_exportar": rol["perm_exportar"],
+        "perm_promociones": rol["perm_promociones"],
+        "perm_administrar": rol["perm_administrar"],
+    }
+
+    # 5. Actualizar ultimo_login
+    db.table("usuarios").update(
+        {"ultimo_login": datetime.now(timezone.utc).isoformat()}
+    ).eq("id", usuario["id"]).execute()
+
+    # 6. Generar y retornar token
+    token = generar_token(payload)
+
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "usuario_id": usuario["id"],
+        "nombre_completo": usuario["nombre_completo"],
+        "sucursal_id": usuario["sucursal_id"],
+        "rol_id": usuario["rol_id"],
+        "permisos": {k: v for k, v in payload.items() if k.startswith("perm_")},
+    }

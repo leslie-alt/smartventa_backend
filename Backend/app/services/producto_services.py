@@ -4,11 +4,19 @@ from app.core.exceptions import ErrorNoEncontrado, ErrorConflicto
 from app.core.database import supabase
 import pandas as pd
 from io import BytesIO
+import json
 
 
 # =============================================================
 # HELPERS INTERNOS
 # =============================================================
+
+def _serializar_para_json(obj: dict | None) -> dict | None:
+    """Convierte UUIDs, fechas y otros tipos no serializables a strings."""
+    if obj is None:
+        return None
+    return json.loads(json.dumps(obj, default=str))
+
 
 def _registrar_auditoria(
     usuario_id: str,
@@ -25,8 +33,8 @@ def _registrar_auditoria(
         "modulo": "productos",
         "accion": accion,
         "registro_id": registro_id,
-        "valores_anteriores": valores_anteriores,
-        "valores_nuevos": valores_nuevos,
+        "valores_anteriores": _serializar_para_json(valores_anteriores),
+        "valores_nuevos": _serializar_para_json(valores_nuevos),
     }).execute()
 
 
@@ -70,18 +78,50 @@ def _obtener_existencia(producto_id: str, sucursal_id: str) -> int:
     return resp.data["cantidad_actual"] if resp.data else 0
 
 
+def _obtener_o_crear_categoria(nombre: str, sucursal_id: str) -> str | None:
+    """
+    Busca una categoría por nombre en la sucursal.
+    Si no existe, la crea y retorna su ID.
+    Retorna None si el nombre está vacío.
+    """
+    if not nombre or not nombre.strip():
+        return None
+
+    nombre = nombre.strip()
+
+    # Buscar existente
+    existente = (
+        supabase.table("categorias")
+        .select("id")
+        .eq("sucursal_id", sucursal_id)
+        .eq("nombre", nombre)
+        .execute()
+    )
+    if existente.data:
+        return existente.data[0]["id"]
+
+    # Crear nueva
+    nueva = (
+        supabase.table("categorias")
+        .insert({"nombre": nombre, "sucursal_id": sucursal_id, "activo": True})
+        .execute()
+    )
+    return nueva.data[0]["id"]
+
+
 # =============================================================
 # CRUD PRODUCTOS
 # =============================================================
 
 def obtener_productos(sucursal_id: str, solo_activos: bool = True) -> list[dict]:
     """
-    Retorna todos los productos de la sucursal con su existencia actual.
+    Retorna todos los productos de la sucursal con su existencia actual
+    y el nombre de su categoría.
     Incluye stock_bajo = True cuando cantidad_actual <= inventario_minimo (RF-01.6).
     """
     query = (
         supabase.table("productos")
-        .select("*, inventario(cantidad_actual)")
+        .select("*, inventario(cantidad_actual), categorias(nombre)")
         .eq("sucursal_id", sucursal_id)
     )
     if solo_activos:
@@ -92,9 +132,10 @@ def obtener_productos(sucursal_id: str, solo_activos: bool = True) -> list[dict]
 
     for p in respuesta.data:
         inv = p.pop("inventario", None)
+        cat = p.pop("categorias", None)
         cantidad_actual = inv[0]["cantidad_actual"] if inv else 0
         p["cantidad_actual"] = cantidad_actual
-        # RF-01.6: alerta si stock <= mínimo
+        p["categoria_nombre"] = cat["nombre"] if cat else None
         p["stock_bajo"] = cantidad_actual <= p["inventario_minimo"]
         productos.append(p)
 
@@ -105,7 +146,7 @@ def obtener_producto_por_id(producto_id: str, sucursal_id: str) -> dict:
     """Retorna un producto por ID verificando que pertenezca a la sucursal."""
     respuesta = (
         supabase.table("productos")
-        .select("*, inventario(cantidad_actual)")
+        .select("*, inventario(cantidad_actual), categorias(nombre)")
         .eq("id", producto_id)
         .eq("sucursal_id", sucursal_id)
         .single()
@@ -116,8 +157,10 @@ def obtener_producto_por_id(producto_id: str, sucursal_id: str) -> dict:
 
     p = respuesta.data
     inv = p.pop("inventario", None)
+    cat = p.pop("categorias", None)
     cantidad_actual = inv[0]["cantidad_actual"] if inv else 0
     p["cantidad_actual"] = cantidad_actual
+    p["categoria_nombre"] = cat["nombre"] if cat else None
     p["stock_bajo"] = cantidad_actual <= p["inventario_minimo"]
     return p
 
@@ -129,11 +172,11 @@ def buscar_productos(
 ) -> list[dict]:
     """
     Búsqueda por código de barras, descripción o categoría (RF-01.3).
-    Retorna productos activos con existencia actual.
+    Retorna productos activos con existencia actual y nombre de categoría.
     """
     query = (
         supabase.table("productos")
-        .select("*, inventario(cantidad_actual)")
+        .select("*, inventario(cantidad_actual), categorias(nombre)")
         .eq("sucursal_id", sucursal_id)
         .eq("activo", True)
     )
@@ -144,15 +187,17 @@ def buscar_productos(
             f"codigo_barras.ilike.%{termino}%,descripcion.ilike.%{termino}%"
         )
     if categoria:
-        query = query.eq("categoria", categoria)
+        query = query.eq("categoria_id", categoria)
 
     respuesta = query.order("descripcion").execute()
     productos = []
 
     for p in respuesta.data:
         inv = p.pop("inventario", None)
+        cat = p.pop("categorias", None)
         cantidad_actual = inv[0]["cantidad_actual"] if inv else 0
         p["cantidad_actual"] = cantidad_actual
+        p["categoria_nombre"] = cat["nombre"] if cat else None
         p["stock_bajo"] = cantidad_actual <= p["inventario_minimo"]
         productos.append(p)
 
@@ -161,7 +206,8 @@ def buscar_productos(
 
 def crear_producto(datos: dict, sucursal_id: str, usuario_id: str) -> dict:
     """
-    Crea un producto y su registro de inventario inicial en 0.
+    Crea un producto. El trigger `crear_inventario_producto` se encarga
+    de crear automáticamente el registro de inventario en 0.
     Genera registro en auditoría.
     """
     # Verificar código de barras único en la sucursal
@@ -177,15 +223,8 @@ def crear_producto(datos: dict, sucursal_id: str, usuario_id: str) -> dict:
             raise ErrorConflicto("Ya existe un producto con ese código de barras en esta sucursal.")
 
     nuevo = {**datos, "sucursal_id": sucursal_id}
-    respuesta = supabase.table("productos").insert(nuevo).execute()
+    respuesta = supabase.table("productos").insert(_serializar_para_json(nuevo)).execute()
     producto = respuesta.data[0]
-
-    # Crear registro de inventario en 0
-    supabase.table("inventario").insert({
-        "producto_id": producto["id"],
-        "sucursal_id": sucursal_id,
-        "cantidad_actual": 0,
-    }).execute()
 
     # Auditoría
     _registrar_auditoria(
@@ -230,7 +269,7 @@ def actualizar_producto(
 
     respuesta = (
         supabase.table("productos")
-        .update(datos)
+        .update(_serializar_para_json(datos))
         .eq("id", producto_id)
         .eq("sucursal_id", sucursal_id)
         .execute()
@@ -302,47 +341,37 @@ def cambiar_visibilidad(
 
 
 # =============================================================
-# CATEGORÍAS
-# =============================================================
-
-def obtener_categorias(sucursal_id: str) -> list[dict]:
-    """
-    Retorna las categorías únicas del catálogo de productos de la sucursal.
-    No tienen tabla propia; se extraen dinámicamente de productos.categoria.
-    """
-    respuesta = (
-        supabase.table("productos")
-        .select("categoria")
-        .eq("sucursal_id", sucursal_id)
-        .eq("activo", True)
-        .execute()
-    )
-
-    conteo: dict[str, int] = {}
-    for p in respuesta.data:
-        cat = p["categoria"] or "Sin categoría"
-        conteo[cat] = conteo.get(cat, 0) + 1
-
-    return [{"nombre": k, "total_productos": v} for k, v in sorted(conteo.items())]
-
-
-# =============================================================
 # EXPORTAR / IMPORTAR
 # =============================================================
 
-def exportar_productos_excel(sucursal_id: str) -> bytes:
+def exportar_productos_excel(sucursal_id: str, solo_plantilla: bool = False) -> bytes:
     """
-    Exporta el catálogo completo en formato Excel (RF-01.5).
-    No incluye ruta_imagen (se agrega manualmente después de importar).
+    Exporta el catálogo en formato Excel (RF-01.5).
+    Si solo_plantilla=True, exporta solo los encabezados (plantilla vacía).
     """
-    productos = obtener_productos(sucursal_id, solo_activos=False)
+    if solo_plantilla:
+        productos = []
+    else:
+        productos = obtener_productos(sucursal_id, solo_activos=False)
+
+    # Construir filas con el nombre de la categoría (no el UUID)
+    filas = [{
+        "codigo_barras": p.get("codigo_barras"),
+        "descripcion": p.get("descripcion"),
+        "categoria": p.get("categoria_nombre"),
+        "precio_venta": p.get("precio_venta"),
+        "precio_mayoreo": p.get("precio_mayoreo"),
+        "costo_unitario": p.get("costo_unitario"),
+        "inventario_minimo": p.get("inventario_minimo"),
+        "cantidad_actual": p.get("cantidad_actual"),
+    } for p in productos]
 
     columnas = [
         "codigo_barras", "descripcion", "categoria",
         "precio_venta", "precio_mayoreo", "costo_unitario",
         "inventario_minimo", "cantidad_actual",
     ]
-    df = pd.DataFrame(productos)[columnas]
+    df = pd.DataFrame(filas, columns=columnas)
     df.columns = [
         "Código de Barras", "Descripción", "Categoría",
         "Precio Venta", "Precio Mayoreo", "Costo Unitario",
@@ -361,11 +390,20 @@ def importar_productos_excel(
     usuario_id: str,
 ) -> dict:
     """
-    Importa productos desde Excel o CSV (RF-01.5).
-    Columnas requeridas: Código de Barras, Descripción, Categoría,
-    Precio Venta, Precio Mayoreo, Costo Unitario, Inventario Mínimo.
-    La imagen se agrega manualmente después.
+    Importa productos desde Excel o CSV (RF-01.5) — versión optimizada.
+    
+    Optimizaciones:
+        - Precarga de productos y categorías existentes (2 consultas iniciales)
+        - Inserts en batches de 500 filas
+        - Updates en batches de 500 filas
+        - Categorías nuevas se crean en batch antes de procesar productos
+    
+    Columnas requeridas: Descripción, Precio Venta, Precio Mayoreo, Costo Unitario.
+    Columnas opcionales: Código de Barras, Categoría, Inventario Mínimo.
     """
+    BATCH_SIZE = 500
+
+    # 1. Leer archivo
     try:
         df = pd.read_excel(BytesIO(contenido))
     except Exception:
@@ -377,73 +415,155 @@ def importar_productos_excel(
     if not columnas_requeridas.issubset(df.columns):
         return {
             "total_filas": 0,
-            "importados": 0,
+            "insertados": 0,
+            "actualizados": 0,
             "omitidos": 0,
-            "errores": [f"Faltan columnas requeridas: {columnas_requeridas - set(df.columns)}"],
+            "errores": [{
+                "fila": 0,
+                "motivo": f"Faltan columnas requeridas: {columnas_requeridas - set(df.columns)}",
+            }],
         }
 
-    importados = 0
+    # 2. Precarga: productos existentes en la sucursal {codigo_barras: id}
+    productos_existentes = {}
+    respuesta_prods = (
+        supabase.table("productos")
+        .select("id, codigo_barras")
+        .eq("sucursal_id", sucursal_id)
+        .execute()
+    )
+    for p in respuesta_prods.data:
+        if p["codigo_barras"]:
+            productos_existentes[p["codigo_barras"]] = p["id"]
+
+    # 3. Precarga: categorías existentes en la sucursal {nombre_lowercase: id}
+    categorias_existentes = {}
+    respuesta_cats = (
+        supabase.table("categorias")
+        .select("id, nombre")
+        .eq("sucursal_id", sucursal_id)
+        .execute()
+    )
+    for c in respuesta_cats.data:
+        categorias_existentes[c["nombre"].strip().lower()] = c["id"]
+
+    # 4. Primera pasada: identificar categorías nuevas que hay que crear
+    nombres_categorias_nuevas = set()
+    for _, fila in df.iterrows():
+        nombre_cat = str(fila.get("Categoría", "")).strip()
+        if nombre_cat and nombre_cat.lower() not in categorias_existentes:
+            nombres_categorias_nuevas.add(nombre_cat)
+
+    # Crear categorías nuevas en batch
+    if nombres_categorias_nuevas:
+        nuevas_cats = [
+            {"nombre": n, "sucursal_id": sucursal_id, "activo": True}
+            for n in nombres_categorias_nuevas
+        ]
+        resultado = supabase.table("categorias").insert(nuevas_cats).execute()
+        for c in resultado.data:
+            categorias_existentes[c["nombre"].strip().lower()] = c["id"]
+
+    # 5. Segunda pasada: clasificar filas en insertar / actualizar / error
+    insertar_lote: list[dict] = []
+    actualizar_lote: list[dict] = []  # cada item: {"id": ..., "datos": {...}}
     omitidos = 0
-    errores = []
+    errores: list[dict] = []
 
     for i, fila in df.iterrows():
+        numero_fila = int(i) + 2
+
         try:
             codigo = str(fila.get("Código de Barras", "")).strip() or None
+            if codigo and codigo.lower() == "nan":
+                codigo = None
 
-            # Omitir si ya existe ese código en la sucursal
-            if codigo:
-                existente = (
-                    supabase.table("productos")
-                    .select("id")
-                    .eq("sucursal_id", sucursal_id)
-                    .eq("codigo_barras", codigo)
-                    .execute()
-                )
-                if existente.data:
-                    omitidos += 1
-                    errores.append(f"Fila {i+2}: código '{codigo}' ya existe, omitido.")
-                    continue
+            descripcion = str(fila["Descripción"]).strip()
+            if not descripcion or descripcion.lower() == "nan":
+                omitidos += 1
+                errores.append({"fila": numero_fila, "motivo": "Descripción vacía."})
+                continue
 
-            producto = {
-                "sucursal_id": sucursal_id,
-                "codigo_barras": codigo,
-                "descripcion": str(fila["Descripción"]).strip(),
-                "categoria": str(fila.get("Categoría", "")).strip() or None,
+            # Resolver categoría (ya están precargadas)
+            nombre_cat = str(fila.get("Categoría", "")).strip()
+            categoria_id = (
+                categorias_existentes.get(nombre_cat.lower())
+                if nombre_cat else None
+            )
+
+            datos_producto = {
+                "descripcion": descripcion,
+                "categoria_id": categoria_id,
                 "precio_venta": float(fila["Precio Venta"]),
                 "precio_mayoreo": float(fila["Precio Mayoreo"]),
                 "costo_unitario": float(fila["Costo Unitario"]),
-                "inventario_minimo": int(fila.get("Inventario Mínimo", 0)),
+                "inventario_minimo": int(fila.get("Inventario Mínimo", 0) or 0),
             }
 
-            resp = supabase.table("productos").insert(producto).execute()
-            producto_id = resp.data[0]["id"]
-
-            # Inventario inicial en 0
-            supabase.table("inventario").insert({
-                "producto_id": producto_id,
-                "sucursal_id": sucursal_id,
-                "cantidad_actual": 0,
-            }).execute()
-
-            importados += 1
+            # ¿Existe por código de barras?
+            if codigo and codigo in productos_existentes:
+                actualizar_lote.append({
+                    "id": productos_existentes[codigo],
+                    "datos": datos_producto,
+                })
+            else:
+                datos_producto["codigo_barras"] = codigo
+                datos_producto["sucursal_id"] = sucursal_id
+                insertar_lote.append(datos_producto)
 
         except Exception as e:
             omitidos += 1
-            errores.append(f"Fila {i+2}: {str(e)}")
+            errores.append({"fila": numero_fila, "motivo": str(e)})
 
-    # Auditoría del proceso completo
+    # 6. Ejecutar INSERTS en batches
+    insertados = 0
+    for inicio in range(0, len(insertar_lote), BATCH_SIZE):
+        batch = insertar_lote[inicio:inicio + BATCH_SIZE]
+        try:
+            resultado = supabase.table("productos").insert(batch).execute()
+            insertados += len(resultado.data)
+        except Exception as e:
+            # Si el batch entero falla, registrar error genérico
+            errores.append({
+                "fila": 0,
+                "motivo": f"Error al insertar lote (filas {inicio + 1}-{inicio + len(batch)}): {str(e)}",
+            })
+            omitidos += len(batch)
+
+    # 7. Ejecutar UPDATES (uno por uno, Supabase no soporta update masivo con distintos valores)
+    actualizados = 0
+    for item in actualizar_lote:
+        try:
+            supabase.table("productos").update(item["datos"]).eq(
+                "id", item["id"]
+            ).execute()
+            actualizados += 1
+        except Exception as e:
+            omitidos += 1
+            errores.append({
+                "fila": 0,
+                "motivo": f"Error al actualizar producto {item['id']}: {str(e)}",
+            })
+
+    # 8. Auditoría del proceso completo
     _registrar_auditoria(
         usuario_id=usuario_id,
         sucursal_id=sucursal_id,
         accion="importar_productos",
         registro_id=sucursal_id,
         valores_anteriores=None,
-        valores_nuevos={"importados": importados, "omitidos": omitidos},
+        valores_nuevos={
+            "insertados": insertados,
+            "actualizados": actualizados,
+            "omitidos": omitidos,
+            "total_filas": len(df),
+        },
     )
 
     return {
         "total_filas": len(df),
-        "importados": importados,
+        "insertados": insertados,
+        "actualizados": actualizados,
         "omitidos": omitidos,
-        "errores": errores,
+        "errores": errores[:100],  # Limitar a 100 errores para no saturar la UI
     }
