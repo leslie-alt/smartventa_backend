@@ -89,46 +89,72 @@ def obtener_promociones(sucursal_id: str, solo_activas: bool = True) -> list[dic
 
     return promociones
 
-
 def obtener_promocion_por_id(promocion_id: str, sucursal_id: str) -> dict:
-    """Retorna una promoción verificando que el producto pertenezca a la sucursal."""
-    respuesta = (
-        supabase.table("promociones")
-        .select("*, productos(descripcion, codigo_barras, sucursal_id)")
-        .eq("id", promocion_id)
-        .single()
-        .execute()
-    )
+    """
+    Retorna una promoción por ID, verificando que el producto asociado
+    pertenezca a la sucursal del usuario.
+    """
+    try:
+        respuesta = (
+            supabase.table("promociones")
+            .select("*, productos!inner(descripcion, codigo_barras, sucursal_id)")
+            .eq("id", promocion_id)
+            .eq("productos.sucursal_id", sucursal_id)
+            .single()
+            .execute()
+        )
+    except Exception:
+        raise ErrorNoEncontrado("Promoción")
+
     if not respuesta.data:
         raise ErrorNoEncontrado("Promoción")
 
-    promocion = respuesta.data
-    producto_data = promocion.pop("productos", None)
+    p = respuesta.data
+    producto_data = p.pop("productos", None)
+    p["producto_descripcion"] = producto_data["descripcion"] if producto_data else ""
+    p["producto_codigo_barras"] = producto_data.get("codigo_barras") if producto_data else None
+    return p
 
-    # Verificar que el producto pertenezca a la sucursal del usuario
-    if not producto_data or producto_data.get("sucursal_id") != sucursal_id:
-        raise ErrorNoEncontrado("Promoción")
+def obtener_promociones(sucursal_id: str, solo_activas: bool = True) -> list[dict]:
+    """
+    Retorna todas las promociones de la sucursal.
+    Se obtiene la sucursal a través de producto_id → productos.sucursal_id.
+    """
+    # Usar inner join con filtro por sucursal_id del producto.
+    # El "!inner" obliga a que el join sea obligatorio (excluye promociones huérfanas).
+    query = (
+        supabase.table("promociones")
+        .select("*, productos!inner(descripcion, codigo_barras, sucursal_id)")
+        .eq("productos.sucursal_id", sucursal_id)
+    )
+    if solo_activas:
+        query = query.eq("activa", True)
 
-    promocion["producto_descripcion"] = producto_data["descripcion"]
-    promocion["producto_codigo_barras"] = producto_data.get("codigo_barras")
-    return promocion
+    respuesta = query.order("creado_en", desc=True).execute()
 
+    promociones = []
+    for p in respuesta.data:
+        producto_data = p.pop("productos", None)
+        p["producto_descripcion"] = producto_data["descripcion"] if producto_data else ""
+        p["producto_codigo_barras"] = producto_data.get("codigo_barras") if producto_data else None
+        promociones.append(p)
+
+    return promociones
 
 def obtener_promocion_activa_por_producto(producto_id: str) -> dict | None:
-    """
-    Retorna la promoción activa de un producto si existe.
-    Usado en el cálculo de precios al momento de la venta (RF-09, RF-05.5).
-    """
-    respuesta = (
-        supabase.table("promociones")
-        .select("*")
-        .eq("producto_id", producto_id)
-        .eq("activa", True)
-        .single()
-        .execute()
-    )
-    return respuesta.data if respuesta.data else None
-
+    """Retorna la promoción activa de un producto, o None si no existe."""
+    try:
+        respuesta = (
+            supabase.table("promociones")
+            .select("*")
+            .eq("producto_id", producto_id)
+            .eq("activa", True)
+            .single()
+            .execute()
+        )
+        return respuesta.data
+    except Exception:
+        return None
 
 def crear_promocion(datos: dict, sucursal_id: str, usuario_id: str) -> dict:
     """

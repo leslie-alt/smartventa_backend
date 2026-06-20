@@ -40,6 +40,7 @@ def buscar_productos_kardex(
 
 
 def consultar_kardex(
+    
     producto_id: str,
     sucursal_id: str,
     fecha_desde: date | None = None,
@@ -56,7 +57,8 @@ def consultar_kardex(
     producto = (
         supabase.table("productos")
         .select(
-            "id, codigo_barras, descripcion, costo_unitario, inventario_minimo, "
+            "id, codigo_barras, descripcion, costo_unitario, precio_venta, "
+            "inventario_minimo, ruta_imagen, "
             "categorias(nombre), inventario(cantidad_actual)"
         )
         .eq("id", producto_id)
@@ -80,8 +82,11 @@ def consultar_kardex(
         "existencia_actual": existencia_actual,
         "inventario_minimo": p["inventario_minimo"],
         "costo_unitario": p["costo_unitario"],
+        "precio_venta": p["precio_venta"],
+        "ruta_imagen": p["ruta_imagen"],
         "stock_bajo": existencia_actual <= p["inventario_minimo"],
     }
+
 
     # 2. Movimientos con filtros
     query = (

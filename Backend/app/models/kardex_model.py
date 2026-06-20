@@ -34,6 +34,8 @@ class KardexEncabezado(BaseModel):
     existencia_actual: int
     inventario_minimo: int
     costo_unitario: Decimal
+    precio_venta: Decimal
+    ruta_imagen: str | None
     stock_bajo: bool
 
 
