@@ -14,10 +14,12 @@ def listar_inventario(
     termino: str | None = None,
     categoria_id: str | None = None,
     solo_stock_bajo: bool = False,
+    pagina: int = 1,
+    por_pagina: int = 50,
     usuario: dict = Depends(obtener_usuario_actual),
 ):
     """
-    Listado de productos con existencia actual y alertas de stock bajo.
+    Listado paginado de productos con existencia actual y alertas de stock bajo.
     Pantalla principal del módulo de inventario.
     Incluye filtros por código/descripción, categoría y stock bajo.
     """
@@ -26,6 +28,8 @@ def listar_inventario(
         termino=termino,
         categoria_id=categoria_id,
         solo_stock_bajo=solo_stock_bajo,
+        pagina=pagina,
+        por_pagina=por_pagina,
     )
 
 

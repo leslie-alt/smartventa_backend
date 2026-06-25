@@ -17,8 +17,8 @@ class ProductoCreate(BaseModel):
     precio_mayoreo: Decimal = Field(gt=0, decimal_places=2)
     costo_unitario: Decimal = Field(ge=0, decimal_places=2)
     inventario_minimo: int = Field(default=0, ge=0)
+    stock_inicial: int = Field(default=0, ge=0)
     ruta_imagen: str | None = Field(default=None)
-
     @field_validator("precio_mayoreo")
     @classmethod
     def mayoreo_menor_que_venta(cls, v, info):

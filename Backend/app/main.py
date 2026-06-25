@@ -2,14 +2,17 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
 from app.core.config import config
 from app.core.database import supabase
+
 from app.routes.auth_routes import router as router_auth
 from app.routes.productos import router as router_productos
 from app.routes.categoria import router as router_categorias
 from app.routes.promociones import router as router_promociones
 from app.routes.inventario import router as router_inventario
 from app.routes.kardex import router as router_kardex
+from app.routes import usuario_routes
 
 # --- Scheduler para mantener activa la conexión con Supabase ---
 scheduler = AsyncIOScheduler()
@@ -57,3 +60,4 @@ app.include_router(router_categorias, prefix="/categorias", tags=["Categorías"]
 app.include_router(router_promociones, prefix="/promociones", tags=["Promociones"])
 app.include_router(router_inventario, prefix="/inventario", tags=["Inventario"])
 app.include_router(router_kardex, prefix="/kardex", tags=["Kardex"])
+app.include_router(usuario_routes.router, prefix="/usuarios", tags=["Usuarios"])

@@ -208,6 +208,8 @@ def crear_producto(datos: dict, sucursal_id: str, usuario_id: str) -> dict:
     """
     Crea un producto. El trigger `crear_inventario_producto` se encarga
     de crear automáticamente el registro de inventario en 0.
+    Si se especifica stock_inicial, se actualiza el inventario y se
+    registra la entrada en kardex.
     Genera registro en auditoría.
     """
     # Verificar código de barras único en la sucursal
@@ -222,9 +224,35 @@ def crear_producto(datos: dict, sucursal_id: str, usuario_id: str) -> dict:
         if existente.data:
             raise ErrorConflicto("Ya existe un producto con ese código de barras en esta sucursal.")
 
+    # Extraer stock_inicial — no es columna de la tabla productos
+    stock_inicial = datos.pop("stock_inicial", 0) or 0
+
     nuevo = {**datos, "sucursal_id": sucursal_id}
     respuesta = supabase.table("productos").insert(_serializar_para_json(nuevo)).execute()
     producto = respuesta.data[0]
+
+    cantidad_actual = 0
+
+    # Si se especificó stock inicial, actualizar inventario + kardex
+    if stock_inicial > 0:
+        supabase.table("inventario").update({
+            "cantidad_actual": stock_inicial,
+        }).eq("producto_id", producto["id"]).eq("sucursal_id", sucursal_id).execute()
+
+        supabase.table("kardex").insert({
+            "producto_id": producto["id"],
+            "sucursal_id": sucursal_id,
+            "usuario_id": usuario_id,
+            "tipo_movimiento": "entrada_mercancia",
+            "tipo_referencia": "entrada",
+            "cantidad_entrada": stock_inicial,
+            "cantidad_salida": 0,
+            "existencia_resultante": stock_inicial,
+            "costo_unitario": float(producto["costo_unitario"]),
+            "notas": "Stock inicial al crear el producto",
+        }).execute()
+
+        cantidad_actual = stock_inicial
 
     # Auditoría
     _registrar_auditoria(
@@ -233,11 +261,11 @@ def crear_producto(datos: dict, sucursal_id: str, usuario_id: str) -> dict:
         accion="crear_producto",
         registro_id=producto["id"],
         valores_anteriores=None,
-        valores_nuevos=producto,
+        valores_nuevos={**producto, "stock_inicial": stock_inicial},
     )
 
-    producto["cantidad_actual"] = 0
-    producto["stock_bajo"] = 0 <= producto["inventario_minimo"]
+    producto["cantidad_actual"] = cantidad_actual
+    producto["stock_bajo"] = cantidad_actual <= producto["inventario_minimo"]
     return producto
 
 
@@ -567,3 +595,18 @@ def importar_productos_excel(
         "omitidos": omitidos,
         "errores": errores[:100],  # Limitar a 100 errores para no saturar la UI
     }
+
+def obtener_categorias(sucursal_id: str) -> list[dict]:
+    """
+    Retorna las categorías únicas usadas en productos de la sucursal,
+    para el filtro de categoría en el catálogo.
+    """
+    respuesta = (
+        supabase.table("categorias")
+        .select("id, nombre, sucursal_id, activo, creado_en")
+        .eq("sucursal_id", sucursal_id)
+        .eq("activo", True)
+        .order("nombre")
+        .execute()
+    )
+    return respuesta.data
