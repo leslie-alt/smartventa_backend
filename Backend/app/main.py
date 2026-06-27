@@ -13,6 +13,7 @@ from app.routes.promociones import router as router_promociones
 from app.routes.inventario import router as router_inventario
 from app.routes.kardex import router as router_kardex
 from app.routes import usuario_routes
+from app.routes import caja_movimiento_router
 
 # --- Scheduler para mantener activa la conexión con Supabase ---
 scheduler = AsyncIOScheduler()
@@ -61,3 +62,4 @@ app.include_router(router_promociones, prefix="/promociones", tags=["Promociones
 app.include_router(router_inventario, prefix="/inventario", tags=["Inventario"])
 app.include_router(router_kardex, prefix="/kardex", tags=["Kardex"])
 app.include_router(usuario_routes.router, prefix="/usuarios", tags=["Usuarios"])
+app.include_router(caja_movimiento_router.router, prefix="/movimientos-caja", tags=["movimientos_caja"])
