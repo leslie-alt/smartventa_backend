@@ -34,6 +34,7 @@ def listar_productos(
 def buscar_productos(
     termino: str | None = None,
     categoria: str | None = None,
+    solo_con_stock: bool = False,
     usuario: dict = Depends(obtener_usuario_actual),
 ):
     """
@@ -44,8 +45,8 @@ def buscar_productos(
         sucursal_id=usuario["sucursal_id"],
         termino=termino,
         categoria=categoria,
+        solo_con_stock=solo_con_stock,
     )
-
 
 @router.get("/exportar/excel")
 def exportar_excel(

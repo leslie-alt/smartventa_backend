@@ -169,10 +169,17 @@ def buscar_productos(
     sucursal_id: str,
     termino: str | None = None,
     categoria: str | None = None,
+    solo_con_stock: bool = False,
 ) -> list[dict]:
     """
     Búsqueda por código de barras, descripción o categoría (RF-01.3).
-    Retorna productos activos con existencia actual y nombre de categoría.
+    Usado en POS y verificador de precios (RF-01.4).
+
+    solo_con_stock=True oculta productos agotados — pensado para el
+    catálogo del POS (RF-01.6 ya alerta sobre stock bajo, pero aquí
+    directamente no se ofrecen productos sin existencia para vender).
+    El verificador de precios debe seguir usando solo_con_stock=False
+    para poder confirmar precio aunque esté agotado.
     """
     query = (
         supabase.table("productos")
@@ -182,20 +189,23 @@ def buscar_productos(
     )
 
     if termino:
-        # Busca en código de barras o descripción
         query = query.or_(
             f"codigo_barras.ilike.%{termino}%,descripcion.ilike.%{termino}%"
         )
     if categoria:
         query = query.eq("categoria_id", categoria)
 
-    respuesta = query.order("descripcion").execute()
+    respuesta = query.order("descripcion").range(0, 199).execute()
     productos = []
 
     for p in respuesta.data:
         inv = p.pop("inventario", None)
         cat = p.pop("categorias", None)
         cantidad_actual = inv[0]["cantidad_actual"] if inv else 0
+
+        if solo_con_stock and cantidad_actual <= 0:
+            continue
+
         p["cantidad_actual"] = cantidad_actual
         p["categoria_nombre"] = cat["nombre"] if cat else None
         p["stock_bajo"] = cantidad_actual <= p["inventario_minimo"]
