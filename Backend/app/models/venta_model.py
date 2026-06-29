@@ -66,7 +66,11 @@ class PagoCreate(BaseModel):
 
 
 class VentaCreate(BaseModel):
-    """Payload para cerrar una venta desde el POS."""
+    """Payload para cerrar una venta desde el POS.
+    caja_id y turno_id se validan contra la base de datos en el service
+    (RNF-03.4) — no se confía en el JWT, que solo identifica al usuario."""
+    caja_id: UUID
+    turno_id: UUID
     cliente_id: Optional[UUID] = None
     articulos: list[VentaArticuloCreate] = Field(min_length=1)
     pagos: list[PagoCreate] = Field(min_length=1)

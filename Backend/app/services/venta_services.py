@@ -1,9 +1,32 @@
-from datetime import date, datetime
+from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
 
 from fastapi import HTTPException
 
 from app.core.database import supabase  # ajustar import según tu cliente de Supabase
+
+
+def _validar_turno_abierto(turno_id: str, caja_id: str, usuario_id: str, sucursal_id: str) -> None:
+    """Confirma que el turno está abierto, es del usuario actual y pertenece
+    a la caja/sucursal indicadas (RNF-03.4: nadie ejecuta sin el contexto correcto)."""
+    respuesta = (
+        supabase.table("turnos")
+        .select("id, estado, usuario_id, caja_id, cajas!inner(sucursal_id)")
+        .eq("id", turno_id)
+        .single()
+        .execute()
+    )
+    turno = respuesta.data
+    if not turno:
+        raise HTTPException(status_code=404, detail="Turno no encontrado.")
+    if turno["estado"] != "abierto":
+        raise HTTPException(status_code=409, detail="El turno ya está cerrado. Abre un turno antes de vender.")
+    if turno["usuario_id"] != usuario_id:
+        raise HTTPException(status_code=403, detail="Este turno no pertenece al usuario actual.")
+    if turno["caja_id"] != caja_id:
+        raise HTTPException(status_code=400, detail="La caja indicada no coincide con el turno abierto.")
+    if turno["cajas"]["sucursal_id"] != sucursal_id:
+        raise HTTPException(status_code=403, detail="El turno no pertenece a esta sucursal.")
 
 
 def _redondear(valor: Decimal) -> Decimal:
@@ -148,6 +171,12 @@ def crear_venta(
     usuario_id: str,
     tiene_perm_descuentos: bool = False,
 ) -> dict:
+    """Registra una venta directa completa: artículos, pagos, descuento de
+    inventario, kardex y auditoría en una sola operación atómica (RPC).
+    caja_id y turno_id se validan contra la base de datos antes de continuar
+    (RNF-03.4)."""
+    _validar_turno_abierto(turno_id, caja_id, usuario_id, sucursal_id)
+
     articulos_in = datos["articulos"]
     pagos_in = datos["pagos"]
     cliente_id = datos.get("cliente_id")
@@ -377,6 +406,7 @@ def cobrar_ticket_pendiente(
     if not resultado.data:
         raise HTTPException(status_code=500, detail="No se pudo cobrar el ticket")
     return resultado.data
+
 
 def obtener_venta(venta_id: str, sucursal_id: str) -> dict:
 
