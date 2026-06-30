@@ -37,6 +37,7 @@ class VentaArticuloCreate(BaseModel):
 
 class TicketPendienteGuardar(BaseModel):
     """Payload para crear/actualizar un ticket pendiente."""
+    caja_id: UUID                              # ← agregar
     cliente_id: Optional[UUID] = None
     articulos: list[VentaArticuloCreate] = Field(min_length=1)
     notas: Optional[str] = None
@@ -102,8 +103,8 @@ class TicketPendienteOut(BaseModel):
 
 class TicketCobrarCreate(BaseModel):
     """Payload para cobrar un ticket pendiente."""
+    caja_id: UUID                              # ← agregar
     pagos: list[PagoCreate] = Field(min_length=1)
-
 
 class PagoOut(BaseModel):
     id: UUID

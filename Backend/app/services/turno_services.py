@@ -11,8 +11,16 @@ def abrir_turno(
     fondo_inicial: float = 0, notas: str | None = None,
 ) -> dict:
     """Abre un turno y registra el fondo inicial en movimientos_caja (RF-10.1)."""
-    caja_services.obtener_caja(caja_id, sucursal_id)
+    caja = caja_services.obtener_caja(caja_id, sucursal_id)
 
+    if caja.get("es_verificador"):
+        raise HTTPException(
+            status_code=409,
+            detail="No se puede abrir un turno en la estación de verificador de precios.",
+        )
+
+    
+    
     try:
         resultado = supabase.rpc(
             "abrir_turno_con_fondo",
@@ -143,3 +151,19 @@ def cerrar_turno(turno_id: str, sucursal_id: str) -> dict:
     if not respuesta.data:
         raise HTTPException(status_code=500, detail="No se pudo cerrar el turno.")
     return respuesta.data[0]
+
+
+def listar_turnos(caja_id: str, sucursal_id: str, fecha: str | None = None) -> dict:
+    """Lista turnos de una caja, opcionalmente filtrados por fecha (YYYY-MM-DD)."""
+    query = (
+        supabase.table("turnos")
+        .select("id, inicio, cierre, estado, usuario_id")
+        .eq("caja_id", caja_id)
+        .order("inicio", desc=True)
+    )
+    if fecha:
+        # Filtrar por día completo en UTC
+        query = query.gte("inicio", f"{fecha}T00:00:00Z").lt("inicio", f"{fecha}T23:59:59Z")
+
+    respuesta = query.limit(20).execute()
+    return {"items": respuesta.data or []}

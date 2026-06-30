@@ -233,10 +233,18 @@ def crear_venta(
             "p_pagos": pagos_calculados,
         },
     ).execute()
-
+    print("DEBUG registrar_venta_completa resultado.data:", resultado.data)
+    
     if not resultado.data:
         raise HTTPException(status_code=500, detail="No se pudo registrar la venta")
-    return resultado.data
+
+    # RPC regresa JSONB plano — obtener venta completa para VentaOut
+    data = resultado.data
+    venta_id = data.get("id") if isinstance(data, dict) else data[0].get("id")
+    if not venta_id:
+        raise HTTPException(status_code=500, detail="No se pudo obtener el ID de la venta registrada")
+
+    return obtener_venta(venta_id, sucursal_id)
 
 def _calcular_articulos_y_total(
     articulos_in: list[dict],
@@ -332,7 +340,7 @@ def guardar_ticket_pendiente(
             "p_articulos": articulos_calc,
         },
     ).execute()
-
+    print("DEBUG registrar_venta_completa resultado.data:", resultado.data)
     if not resultado.data:
         raise HTTPException(status_code=500, detail="No se pudo guardar el ticket pendiente")
     return obtener_venta(resultado.data["id"], sucursal_id)

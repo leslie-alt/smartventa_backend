@@ -63,7 +63,7 @@ def login(nombre_usuario: str, contrasena: str, db: Client) -> dict:
                 "perm_inventario_entrada, perm_inventario_ajuste, perm_kardex, "
                 "perm_corte_caja, perm_modificar_precios, perm_cancelar_tickets, "
                 "perm_clientes, perm_descuentos, perm_reportes, perm_exportar, "
-                "perm_promociones, perm_administrar"
+                "perm_promociones, perm_administrar, perm_movimientos_caja"
             )
             .eq("id", usuario["rol_id"])
             .single()

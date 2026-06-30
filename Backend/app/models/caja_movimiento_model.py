@@ -13,10 +13,10 @@ class TipoMovimientoCaja(str, Enum):
 
 
 class MovimientoCajaCreate(BaseModel):
+    caja_id: UUID
     tipo_movimiento: TipoMovimientoCaja
     monto: Decimal = Field(gt=0)
     notas: Optional[str] = None
-
 
 class MovimientoCajaOut(BaseModel):
     id: UUID
