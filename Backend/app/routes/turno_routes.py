@@ -10,7 +10,20 @@ from typing import Optional
 
 router = APIRouter()
 
+@router.get("/", response_model=dict)
+def listar_turnos(
+    caja_id: UUID,
+    fecha: Optional[str] = None,
+    usuario: dict = Depends(verificar_permiso("perm_corte_caja")),
+):
+    """Lista turnos de una caja por fecha. Usado para el filtro de cierre."""
+    return turno_services.listar_turnos(
+        caja_id=str(caja_id),
+        sucursal_id=usuario["sucursal_id"],
+        fecha=fecha,
+    )
 
+    
 @router.post("/abrir", response_model=TurnoOut)
 def abrir_turno(
     datos: TurnoAbrir,
