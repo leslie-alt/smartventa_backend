@@ -47,8 +47,11 @@ def _obtener_productos_para_venta(producto_ids: list[str], sucursal_id: str) -> 
         .eq("inventario.sucursal_id", sucursal_id)
         .execute()
     )
-    productos = {p["id"]: p for p in (respuesta.data or [])}
 
+    for p in (respuesta.data or []):
+        print(f"DEBUG {p['descripcion']}: promociones={p.get('promociones')}")
+
+    productos = {p["id"]: p for p in (respuesta.data or [])}
     faltantes = set(producto_ids) - set(productos.keys())
     if faltantes:
         raise HTTPException(
@@ -349,15 +352,14 @@ def guardar_ticket_pendiente(
 def listar_tickets_pendientes(caja_id: str, sucursal_id: str) -> list[dict]:
     respuesta = (
         supabase.table("ventas")
-        .select("*, venta_articulos(*, productos(descripcion, codigo_barras, ruta_imagen)), pagos(*))(*, productos(descripcion))"
+        .select("*, venta_articulos(*, productos(descripcion))")
         .eq("caja_id", caja_id)
         .eq("sucursal_id", sucursal_id)
         .eq("estado", "pendiente")
         .order("creado_en")
         .execute()
-    ))
+    )
     return respuesta.data or []
-
 
 def eliminar_ticket_pendiente(venta_id: str, sucursal_id: str, caja_id: str, usuario_id: str) -> dict:
     try:

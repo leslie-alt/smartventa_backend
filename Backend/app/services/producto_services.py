@@ -5,6 +5,7 @@ from app.core.database import supabase
 import pandas as pd
 from io import BytesIO
 import json
+from datetime import date
 
 
 # =============================================================
@@ -183,7 +184,10 @@ def buscar_productos(
     """
     query = (
         supabase.table("productos")
-        .select("*, inventario(cantidad_actual), categorias(nombre)")
+        .select(
+            "*, inventario(cantidad_actual), categorias(nombre), "
+            "promociones(cantidad_minima, tipo_beneficio, valor_beneficio, activa, fecha_inicio)"
+        )
         .eq("sucursal_id", sucursal_id)
         .eq("activo", True)
     )
@@ -197,6 +201,7 @@ def buscar_productos(
 
     respuesta = query.order("descripcion").range(0, 199).execute()
     productos = []
+    hoy = date.today()
 
     for p in respuesta.data:
         inv = p.pop("inventario", None)
@@ -209,6 +214,28 @@ def buscar_productos(
         p["cantidad_actual"] = cantidad_actual
         p["categoria_nombre"] = cat["nombre"] if cat else None
         p["stock_bajo"] = cantidad_actual <= p["inventario_minimo"]
+
+        # Extraer promoción activa y vigente (RF-09.2: respeta fecha_inicio).
+        # Se alinea con _promocion_aplicable() de ventas para que el precio
+        # mostrado en el POS coincida con el que calcula el backend al cobrar.
+        promos = p.pop("promociones", None) or []
+        promo_activa = next(
+            (pr for pr in promos
+             if pr.get("activa")
+             and (not pr.get("fecha_inicio")
+                  or date.fromisoformat(str(pr["fecha_inicio"])) <= hoy)),
+            None,
+        )
+        if promo_activa:
+            es_precio_especial = promo_activa["tipo_beneficio"] == "precio_especial"
+            p["precio_promo"] = float(promo_activa["valor_beneficio"]) if es_precio_especial else None
+            p["porcentaje_promo"] = float(promo_activa["valor_beneficio"]) if not es_precio_especial else None
+            p["cantidad_minima_promo"] = promo_activa["cantidad_minima"]
+        else:
+            p["precio_promo"] = None
+            p["porcentaje_promo"] = None
+            p["cantidad_minima_promo"] = None
+
         productos.append(p)
 
     return productos

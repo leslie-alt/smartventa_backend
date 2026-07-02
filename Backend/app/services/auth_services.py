@@ -95,6 +95,7 @@ def login(nombre_usuario: str, contrasena: str, db: Client) -> dict:
         "perm_exportar": rol["perm_exportar"],
         "perm_promociones": rol["perm_promociones"],
         "perm_administrar": rol["perm_administrar"],
+        "perm_movimientos_caja": rol["perm_movimientos_caja"],
     }
 
     # 5. Actualizar ultimo_login
