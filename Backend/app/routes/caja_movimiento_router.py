@@ -1,3 +1,5 @@
+#caja_movimiento_router.py
+
 from fastapi import APIRouter, Depends, HTTPException
 from app.core.deps import verificar_permiso
 from app.models.caja_movimiento_model import MovimientoCajaCreate, MovimientoCajaOut

@@ -16,7 +16,7 @@ from app.routes import usuario_routes
 from app.routes import caja_movimiento_router
 from app.routes import turno_routes   # ← agregar
 from app.routes import caja_routes
-
+from app.routes import sucursal_routes   # ← agregar
 from app.routes.venta_routes import router as router_ventas
 
 # --- Scheduler para mantener activa la conexión con Supabase ---
@@ -70,3 +70,4 @@ app.include_router(caja_movimiento_router.router, prefix="/movimientos-caja", ta
 app.include_router(turno_routes.router, prefix="/turnos", tags=["Turnos"])         
 app.include_router(caja_routes.router, prefix="/cajas", tags=["Cajas"])           
 app.include_router(router_ventas, prefix="/ventas", tags=["Ventas"]) 
+app.include_router(sucursal_routes.router, prefix="/sucursales", tags=["Sucursales"])
