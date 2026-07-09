@@ -236,6 +236,7 @@ def buscar_productos(
             p["porcentaje_promo"] = None
             p["cantidad_minima_promo"] = None
 
+        
         productos.append(p)
 
     return productos

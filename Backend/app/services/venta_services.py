@@ -4,6 +4,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from fastapi import HTTPException
 
 from app.core.database import supabase  # ajustar import según tu cliente de Supabase
+from postgrest.exceptions import APIError
 
 
 def _validar_turno_abierto(turno_id: str, caja_id: str, usuario_id: str, sucursal_id: str) -> None:
@@ -400,22 +401,45 @@ def cobrar_ticket_pendiente(
 
     metodo_pago_principal = "mixto" if len(pagos_calculados) > 1 else pagos_calculados[0]["metodo"]
 
-    resultado = supabase.rpc(
-        "cobrar_ticket_pendiente",
-        {
-            "p_venta_id": venta_id,
-            "p_sucursal_id": sucursal_id,
-            "p_caja_id": caja_id,
-            "p_turno_id": turno_id,
-            "p_usuario_id": usuario_id,
-            "p_metodo_pago_principal": metodo_pago_principal,
-            "p_pagos": pagos_calculados,
-        },
-    ).execute()
+    try:
+        resultado = supabase.rpc(
+            "cobrar_ticket_pendiente",
+            {
+                "p_venta_id": venta_id,
+                "p_sucursal_id": sucursal_id,
+                "p_caja_id": caja_id,
+                "p_turno_id": turno_id,
+                "p_usuario_id": usuario_id,
+                "p_metodo_pago_principal": metodo_pago_principal,
+                "p_pagos": pagos_calculados,
+            },
+        ).execute()
+    except APIError as e:
+        mensaje = getattr(e, "message", None) or str(e)
+        if mensaje.startswith("Stock insuficiente|"):
+            partes = mensaje.split("|")
+            producto_id = partes[1].strip() if len(partes) > 1 else None
+            nombre      = partes[2].strip() if len(partes) > 2 else "un producto"
+            existencia  = partes[3].strip() if len(partes) > 3 else "0"
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "stock_insuficiente",
+                    "producto_id": producto_id,
+                    "nombre": nombre,
+                    "existencia": int(existencia),
+                    "mensaje": f'Sin stock suficiente de "{nombre}" (disponible: {existencia}).',
+                },
+            )
+        if "Stock insuficiente" in mensaje:
+            raise HTTPException(status_code=409, detail="Un producto del ticket no tiene stock suficiente.")
+        raise HTTPException(status_code=400, detail=mensaje)
 
+    # ← ESTO FALTABA: sin return, la función devolvía None
     if not resultado.data:
         raise HTTPException(status_code=500, detail="No se pudo cobrar el ticket")
     return resultado.data
+
 
 
 def obtener_venta(venta_id: str, sucursal_id: str) -> dict:

@@ -66,6 +66,12 @@ class ProductoConStock(ProductoOut):
     """ProductoOut con existencia actual — para verificador de precios y búsquedas."""
     cantidad_actual: int
     stock_bajo: bool  # True si cantidad_actual <= inventario_minimo
+    categoria_nombre: str | None = None
+    # ── Campos de promoción activa (RF-09) — poblados solo en la búsqueda del POS.
+    #    Son None cuando el producto no tiene promoción vigente. ──
+    precio_promo: float | None = None
+    porcentaje_promo: float | None = None
+    cantidad_minima_promo: int | None = None
 
 #
 

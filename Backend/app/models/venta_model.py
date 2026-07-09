@@ -68,15 +68,14 @@ class PagoCreate(BaseModel):
 
 class VentaCreate(BaseModel):
     """Payload para cerrar una venta desde el POS.
-    caja_id y turno_id se validan contra la base de datos en el service
-    (RNF-03.4) — no se confía en el JWT, que solo identifica al usuario."""
+    caja_id se valida contra la base de datos en el service (RNF-03.4).
+    turno_id NO viaja en el body: se deriva de la caja en el endpoint,
+    igual que en los tickets pendientes — el cliente no lo controla.."""
     caja_id: UUID
-    turno_id: UUID
     cliente_id: Optional[UUID] = None
     articulos: list[VentaArticuloCreate] = Field(min_length=1)
     pagos: list[PagoCreate] = Field(min_length=1)
     notas: Optional[str] = None
-
 
 class VentaArticuloOut(BaseModel):
     id: UUID
