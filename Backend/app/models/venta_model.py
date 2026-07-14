@@ -105,6 +105,17 @@ class TicketCobrarCreate(BaseModel):
     caja_id: UUID                              # ← agregar
     pagos: list[PagoCreate] = Field(min_length=1)
 
+from pydantic import BaseModel, Field
+
+class DevolucionArticulo(BaseModel):
+    venta_articulo_id: UUID
+    cantidad: int = Field(gt=0)
+
+class DevolucionCreate(BaseModel):
+    caja_id: UUID
+    articulos: list[DevolucionArticulo] = Field(min_length=1)
+
+
 class PagoOut(BaseModel):
     id: UUID
     metodo: MetodoPago

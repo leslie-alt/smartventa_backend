@@ -63,9 +63,6 @@ def obtener_turno_activo_de_usuario(usuario_id: str, sucursal_id: str) -> dict |
 
 
 def obtener_resumen_turno(turno_id: str, sucursal_id: str) -> dict:
-    """Vista previa de cierre: ventas + movimientos de caja del turno.
-    NOTA: esto no crea el registro oficial en `cortes` (RF-11.4) —
-    eso pertenece al módulo de Cortes, que sigue pendiente."""
     turno = obtener_turno(turno_id)
     caja_services.obtener_caja(turno["caja_id"], sucursal_id)
 
@@ -85,21 +82,40 @@ def obtener_resumen_turno(turno_id: str, sucursal_id: str) -> dict:
 
     movimientos = (
         supabase.table("movimientos_caja")
-        .select("tipo_movimiento, monto")
+        .select("tipo_movimiento, monto, notas, registrado_en")
         .eq("turno_id", turno_id)
+        .order("registrado_en")
         .execute()
     ).data or []
 
-    entradas = sum(float(m["monto"]) for m in movimientos if m["tipo_movimiento"] == "entrada")
-    salidas = sum(float(m["monto"]) for m in movimientos if m["tipo_movimiento"] == "salida")
+    entradas_lista = [m for m in movimientos if m["tipo_movimiento"] == "entrada"]
+    salidas_lista  = [m for m in movimientos if m["tipo_movimiento"] == "salida"]
+
+    # El fondo inicial es la primera entrada del turno (registrada por abrir_turno_con_fondo)
+    fondo_inicial   = float(entradas_lista[0]["monto"]) if entradas_lista else 0.0
+    entradas_manual = sum(float(m["monto"]) for m in entradas_lista[1:])  # entradas después del fondo
+    salidas_total   = sum(float(m["monto"]) for m in salidas_lista)
+
+    # Efectivo esperado en caja = fondo + ventas en efectivo + entradas manuales - salidas
+    efectivo_esperado = (
+        fondo_inicial
+        + totales["efectivo"]
+        + entradas_manual
+        - salidas_total
+    )
 
     return {
         "turno": turno,
         "total_tickets": len(ventas),
         "total_general": sum(totales.values()),
         "totales_por_metodo": totales,
-        "movimientos_entradas": entradas,
-        "movimientos_salidas": salidas,
+        "fondo_inicial": fondo_inicial,
+        "entradas_manual": entradas_manual,
+        "salidas_total": salidas_total,
+        "efectivo_esperado": efectivo_esperado,
+        "movimientos_entradas": fondo_inicial + entradas_manual,
+        "movimientos_salidas": salidas_total,
+        "detalle_movimientos": movimientos,
     }
 
 

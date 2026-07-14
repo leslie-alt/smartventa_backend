@@ -2,11 +2,13 @@ from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
+from app.core.database import supabase
 
 from app.core.deps import obtener_usuario_actual, verificar_permiso
 from app.models.turno_model import TurnoAbrir, TurnoOut
 from app.services import turno_services
 from typing import Optional
+
 
 router = APIRouter()
 
@@ -16,7 +18,6 @@ def listar_turnos(
     fecha: Optional[str] = None,
     usuario: dict = Depends(verificar_permiso("perm_corte_caja")),
 ):
-    """Lista turnos de una caja por fecha. Usado para el filtro de cierre."""
     return turno_services.listar_turnos(
         caja_id=str(caja_id),
         sucursal_id=usuario["sucursal_id"],

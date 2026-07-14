@@ -10,6 +10,7 @@ from app.models.producto_model import (
 )
 from app.models.categoria_model import CategoriaList
 from app.services import producto_services
+from app.core.deps import obtener_usuario_actual, verificar_permiso
 
 router = APIRouter()
 

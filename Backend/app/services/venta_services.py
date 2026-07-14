@@ -5,6 +5,8 @@ from fastapi import HTTPException
 
 from app.core.database import supabase  # ajustar import según tu cliente de Supabase
 from postgrest.exceptions import APIError
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
 
 def _validar_turno_abierto(turno_id: str, caja_id: str, usuario_id: str, sucursal_id: str) -> None:
@@ -258,46 +260,51 @@ def _calcular_articulos_y_total(
     tiene_perm_descuentos: bool,
     tiene_tarjeta: bool,
 ) -> tuple[list[dict], Decimal, bool, str]:
-    """Lógica compartida entre crear_venta y guardar_ticket_pendiente."""
+    """Lógica compartida entre crear_venta y guardar_ticket_pendiente.
+    Mayoreo POR PRODUCTO (RF-05.1): cada línea lleva mayoreo si su propio
+    subtotal a precio de mayoreo supera $350, o si el cliente es mayorista.
+    Tarjeta nunca lleva mayoreo (RF-05.3); promoción activa lo anula (RF-05.5)."""
     hay_forzados = any(a.get("forzar_mayoreo") for a in articulos_in)
     if hay_forzados and not tiene_perm_descuentos:
         raise HTTPException(status_code=403, detail="No tienes permiso para forzar precio de mayoreo (perm_descuentos)")
-
-    subtotal_normal = sum(
-        Decimal(str(productos[str(a["producto_id"])]["precio_venta"])) * a["cantidad"]
-        for a in articulos_in
-    )
 
     cliente_es_mayorista = False
     if cliente_id:
         cliente_es_mayorista = _obtener_cliente_es_mayorista(str(cliente_id), sucursal_id)
 
-    if tiene_tarjeta:
-        mayoreo_ticket = False
-        motivo_mayoreo = "ninguno"
-    elif cliente_es_mayorista:
-        mayoreo_ticket = True
-        motivo_mayoreo = "cliente"
-    elif subtotal_normal > Decimal("350.00"):
-        mayoreo_ticket = True
-        motivo_mayoreo = "monto"
-    else:
-        mayoreo_ticket = False
-        motivo_mayoreo = "ninguno"
-
-    if hay_forzados:
-        motivo_mayoreo = "manual"  # el override manual pisa cualquier otro motivo
-
     articulos_calculados = []
     total = Decimal("0")
+    motivo_mayoreo = "ninguno"
+
     for art in articulos_in:
         producto = productos[str(art["producto_id"])]
-        forzar = bool(art.get("forzar_mayoreo")) and not tiene_tarjeta  # RF-05.3 sigue siendo absoluto
-        calculo = _calcular_linea(producto, art["cantidad"], mayoreo_ticket, forzar_mayoreo=forzar)
+        cantidad = art["cantidad"]
+        precio_mayoreo = Decimal(str(producto["precio_mayoreo"]))
+        forzar = bool(art.get("forzar_mayoreo")) and not tiene_tarjeta  # RF-05.3 absoluto
+
+        # ¿Esta línea califica para mayoreo por monto? Umbral sobre precio de mayoreo.
+        mayoreo_linea = False
+        if not tiene_tarjeta:
+            if cliente_es_mayorista:
+                mayoreo_linea = True
+            elif precio_mayoreo * cantidad > Decimal("350.00"):
+                mayoreo_linea = True
+
+        calculo = _calcular_linea(producto, cantidad, mayoreo_linea, forzar_mayoreo=forzar)
         total += calculo["subtotal"]
+
+        # Motivo predominante del ticket (RF-05.6): manual > cliente > monto
+        if calculo["uso_precio_mayoreo"]:
+            if forzar:
+                motivo_mayoreo = "manual"
+            elif cliente_es_mayorista and motivo_mayoreo != "manual":
+                motivo_mayoreo = "cliente"
+            elif motivo_mayoreo not in ("manual", "cliente"):
+                motivo_mayoreo = "monto"
+
         articulos_calculados.append({
             "producto_id": str(art["producto_id"]),
-            "cantidad": art["cantidad"],
+            "cantidad": cantidad,
             "precio_unitario": float(calculo["precio_unitario"]),
             "uso_precio_mayoreo": calculo["uso_precio_mayoreo"],
             "descuento": float(calculo["descuento"]),
@@ -306,7 +313,6 @@ def _calcular_articulos_y_total(
 
     aplico_mayoreo = any(a["uso_precio_mayoreo"] for a in articulos_calculados)
     return articulos_calculados, total, aplico_mayoreo, motivo_mayoreo
-
 
 def guardar_ticket_pendiente(
     venta_id: str | None,
@@ -435,7 +441,7 @@ def cobrar_ticket_pendiente(
             raise HTTPException(status_code=409, detail="Un producto del ticket no tiene stock suficiente.")
         raise HTTPException(status_code=400, detail=mensaje)
 
-    # ← ESTO FALTABA: sin return, la función devolvía None
+   
     if not resultado.data:
         raise HTTPException(status_code=500, detail="No se pudo cobrar el ticket")
     return resultado.data
@@ -457,3 +463,168 @@ def obtener_venta(venta_id: str, sucursal_id: str) -> dict:
     if not respuesta.data:
         raise HTTPException(status_code=404, detail="Venta no encontrada")
     return respuesta.data
+
+
+
+def listar_ventas_dia(
+    sucursal_id: str,
+    fecha_inicio: str | None = None,
+    fecha_fin: str | None = None,
+    estado: str | None = None,
+    metodo: str | None = None,
+) -> list[dict]:
+    """Lista ventas para la pantalla 'Ventas del día y Devoluciones'.
+    Por defecto (sin filtro de fecha) trae SOLO las de hoy. Solo lectura."""
+    query = (
+        supabase.table("ventas")
+        .select(
+            "id, folio, total, metodo_pago_principal, estado, creado_en, "
+            "aplico_mayoreo, motivo_mayoreo, "
+            "usuarios!ventas_usuario_id_fkey(nombre_completo), clientes(nombre), cajas(nombre)"
+        )
+        .eq("sucursal_id", sucursal_id)
+        .neq("estado", "pendiente")
+    )
+
+
+    # Si el usuario NO especificó ninguna fecha, limitar a HOY (horario de México).
+    if not fecha_inicio and not fecha_fin:
+        tz_mexico = ZoneInfo("America/Mexico_City")
+        ahora_mx = datetime.now(tz_mexico)
+        inicio_dia_mx = ahora_mx.replace(hour=0, minute=0, second=0, microsecond=0)
+        fin_dia_mx = ahora_mx.replace(hour=23, minute=59, second=59, microsecond=999999)
+        query = query.gte("creado_en", inicio_dia_mx.astimezone(ZoneInfo("UTC")).isoformat())
+        query = query.lte("creado_en", fin_dia_mx.astimezone(ZoneInfo("UTC")).isoformat())
+    else:
+        tz_mexico = ZoneInfo("America/Mexico_City")
+        if fecha_inicio:
+            # Inicio del día local (00:00 México) → UTC
+            inicio_mx = datetime.fromisoformat(fecha_inicio).replace(
+                hour=0, minute=0, second=0, microsecond=0, tzinfo=tz_mexico
+            )
+            query = query.gte("creado_en", inicio_mx.astimezone(ZoneInfo("UTC")).isoformat())
+        if fecha_fin:
+            # Fin del día local (23:59:59 México) → UTC
+            fin_mx = datetime.fromisoformat(fecha_fin).replace(
+                hour=23, minute=59, second=59, microsecond=999999, tzinfo=tz_mexico
+            )
+            query = query.lte("creado_en", fin_mx.astimezone(ZoneInfo("UTC")).isoformat())
+
+    if estado:
+        query = query.eq("estado", estado)
+    if metodo:
+        query = query.eq("metodo_pago_principal", metodo)
+
+    respuesta = query.order("creado_en", desc=True).execute()
+
+    ventas = []
+    for v in (respuesta.data or []):
+        usuario = v.pop("usuarios", None)
+        cliente = v.pop("clientes", None)
+        caja = v.pop("cajas", None)
+        v["cajero_nombre"] = usuario["nombre_completo"] if usuario else None
+        v["cliente_nombre"] = cliente["nombre"] if cliente else "Público general"
+        v["caja_nombre"] = caja["nombre"] if caja else None
+        ventas.append(v)
+
+    return ventas
+
+def obtener_venta_detalle(venta_id: str, sucursal_id: str) -> dict:
+    """Detalle completo de una venta para la vista de devolución.
+    Incluye artículos (con cantidad_devuelta) y pagos."""
+    respuesta = (
+        supabase.table("ventas")
+        .select(
+            "id, folio, total, metodo_pago_principal, estado, creado_en, "
+            "aplico_mayoreo, motivo_mayoreo, notas, cancelado_en, "
+            "usuarios!ventas_usuario_id_fkey(nombre_completo), clientes(id, nombre, telefono, es_mayorista), "
+            "cajas(nombre), "
+            "venta_articulos(id, cantidad, cantidad_devuelta, precio_unitario, "
+            "uso_precio_mayoreo, descuento, productos(descripcion, codigo_barras, ruta_imagen)), "
+            "pagos(id, metodo, monto, cambio, referencia)"
+        )
+        .eq("id", venta_id)
+        .eq("sucursal_id", sucursal_id)
+        .single()
+        .execute()
+    )
+    if not respuesta.data:
+        raise HTTPException(status_code=404, detail="Venta no encontrada")
+
+    v = respuesta.data
+    usuario = v.pop("usuarios", None)
+    caja = v.pop("cajas", None)
+    v["cajero_nombre"] = usuario["nombre_completo"] if usuario else None
+    v["caja_nombre"] = caja["nombre"] if caja else None
+    return v
+
+def registrar_devolucion(
+    venta_id: str,
+    articulos: list[dict],   # [{"venta_articulo_id": str, "cantidad": int}]
+    sucursal_id: str,
+    caja_id: str,
+    turno_id: str,
+    usuario_id: str,
+) -> dict:
+    """Registra una devolución parcial o total (RF-04.6).
+    Reingresa inventario, genera kardex, descuenta caja si el pago fue
+    efectivo, y marca la venta como 'devuelta' si se devolvió todo.
+    Todo atómico vía RPC."""
+    if not articulos:
+        raise HTTPException(status_code=400, detail="No se indicó ningún artículo a devolver.")
+
+    try:
+        resultado = supabase.rpc(
+            "registrar_devolucion",
+            {
+                "p_venta_id": venta_id,
+                "p_sucursal_id": sucursal_id,
+                "p_caja_id": caja_id,
+                "p_turno_id": turno_id,
+                "p_usuario_id": usuario_id,
+                "p_articulos": articulos,
+            },
+        ).execute()
+    except APIError as e:
+        mensaje = getattr(e, "message", None) or str(e)
+        # Los RAISE EXCEPTION del RPC (validaciones de cantidad, estado) llegan aquí
+        raise HTTPException(status_code=409, detail=mensaje)
+
+    if not resultado.data:
+        raise HTTPException(status_code=500, detail="No se pudo registrar la devolución")
+    return resultado.data
+
+
+
+def listar_ventas_cliente(
+    cliente_id: str, sucursal_id: str, limite: int = 10
+) -> dict:
+    """Últimas ventas de un cliente para su perfil (RF-07.1)."""
+    respuesta = (
+        supabase.table("ventas")
+        .select("id, folio, total, metodo_pago_principal, estado, creado_en")
+        .eq("cliente_id", cliente_id)
+        .eq("sucursal_id", sucursal_id)
+        .eq("estado", "completada")
+        .order("creado_en", desc=True)
+        .limit(limite)
+        .execute()
+    )
+    ventas = respuesta.data or []
+    total_gastado = sum(float(v["total"]) for v in ventas)
+
+    # Total real de compras (sin límite) para estadísticas
+    conteo = (
+        supabase.table("ventas")
+        .select("id", count="exact")
+        .eq("cliente_id", cliente_id)
+        .eq("sucursal_id", sucursal_id)
+        .eq("estado", "completada")
+        .execute()
+    )
+
+    return {
+        "items": ventas,
+        "total": conteo.count or 0,
+        "total_gastado": total_gastado,
+    }
