@@ -32,10 +32,9 @@ async def listar_auditoria(
 
     consulta = (
         supabase.table("auditoria")
-        .select("*, usuarios(nombre_completo)", count="exact")
+        .select("*, usuarios(nombre_completo), cajas(nombre)", count="exact")
         .eq("sucursal_id", str(sucursal_id))
     )
-
     if filtros.usuario_id:
         consulta = consulta.eq("usuario_id", str(filtros.usuario_id))
     if filtros.caja_id:
@@ -62,7 +61,9 @@ async def listar_auditoria(
     items: list[RegistroAuditoria] = []
     for registro in resultado.data:
         usuario = registro.pop("usuarios", None)
+        caja = registro.pop("cajas", None)
         registro["usuario_nombre"] = usuario.get("nombre_completo") if usuario else None
+        registro["caja_nombre"] = caja.get("nombre") if caja else None
         items.append(RegistroAuditoria(**registro))
 
     return RespuestaAuditoriaPaginada(
