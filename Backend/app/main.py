@@ -1,3 +1,4 @@
+# main.py
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,7 +21,8 @@ from app.routes import sucursal_routes   # ← agregar
 from app.routes.venta_routes import router as router_ventas
 from app.routes.cliente_routes import router as router_clientes
 from app.routes import auditoria_routes
-
+from app.routes import corte_routes
+from app.routes import reporte_routes   # ← agregar
 
 # --- Scheduler para mantener activa la conexión con Supabase ---
 scheduler = AsyncIOScheduler()
@@ -70,7 +72,9 @@ app.include_router(router_inventario, prefix="/inventario", tags=["Inventario"])
 app.include_router(router_kardex, prefix="/kardex", tags=["Kardex"])
 app.include_router(usuario_routes.router, prefix="/usuarios", tags=["Usuarios"])
 app.include_router(caja_movimiento_router.router, prefix="/movimientos-caja", tags=["Movimientos de caja"])
-app.include_router(turno_routes.router, prefix="/turnos", tags=["Turnos"])         
+app.include_router(turno_routes.router, prefix="/turnos", tags=["Turnos"])     
+app.include_router(corte_routes.router, prefix="/cortes", tags=["Cortes"])
+app.include_router(reporte_routes.router, prefix="/reportes", tags=["Reportes"])
 app.include_router(caja_routes.router, prefix="/cajas", tags=["Cajas"])           
 app.include_router(router_ventas, prefix="/ventas", tags=["Ventas"]) 
 app.include_router(sucursal_routes.router, prefix="/sucursales", tags=["Sucursales"])

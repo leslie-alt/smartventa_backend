@@ -1,3 +1,4 @@
+# caja_services.py
 from fastapi import HTTPException
 from app.core.database import supabase
 
