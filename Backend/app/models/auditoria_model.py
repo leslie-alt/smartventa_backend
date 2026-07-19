@@ -8,20 +8,18 @@ from pydantic import BaseModel
 
 
 class RegistroAuditoria(BaseModel):
-    """Registro individual e inmutable del historial de auditoría (RF-13.2)."""
-
     id: UUID
     usuario_id: UUID
     usuario_nombre: Optional[str] = None
     sucursal_id: UUID
     caja_id: Optional[UUID] = None
+    caja_nombre: Optional[str] = None          # ← nuevo
     fecha_hora: datetime
     modulo: str
     accion: str
     registro_id: Optional[UUID] = None
     valores_anteriores: Optional[dict[str, Any]] = None
     valores_nuevos: Optional[dict[str, Any]] = None
-
 
 class FiltrosAuditoria(BaseModel):
     """Filtros opcionales para consultar el historial (RF-13.3)."""
