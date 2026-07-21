@@ -360,7 +360,7 @@ def guardar_ticket_pendiente(
 def listar_tickets_pendientes(caja_id: str, sucursal_id: str) -> list[dict]:
     respuesta = (
         supabase.table("ventas")
-        .select("*, venta_articulos(*, productos(descripcion))")
+        .select("*, venta_articulos(*, productos(descripcion, codigo_barras, ruta_imagen))")
         .eq("caja_id", caja_id)
         .eq("sucursal_id", sucursal_id)
         .eq("estado", "pendiente")
