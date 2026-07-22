@@ -32,13 +32,23 @@ def generar_token(payload: dict) -> str:
     datos["exp"] = expiracion
     return jwt.encode(datos, config.jwt_secret, algorithm=config.jwt_algoritmo)
 
-
 def login(nombre_usuario: str, contrasena: str, db: Client) -> dict:
-    # 1. Buscar usuario
+    PERMISOS = [
+        "perm_inventario_entrada", "perm_inventario_ajuste", "perm_kardex",
+        "perm_corte_caja", "perm_modificar_precios", "perm_cancelar_tickets",
+        "perm_clientes", "perm_descuentos", "perm_reportes", "perm_exportar",
+        "perm_promociones", "perm_administrar", "perm_movimientos_caja",
+        "perm_devoluciones", "perm_auditoria",
+    ]
+
+    # 1. Buscar usuario (ahora incluyendo sus posibles overrides de permisos)
     try:
         respuesta = (
             db.table("usuarios")
-            .select("id, nombre_completo, nombre_usuario, contrasena_hash, activo, sucursal_id, rol_id")
+            .select(
+                "id, nombre_completo, nombre_usuario, contrasena_hash, activo, "
+                "sucursal_id, rol_id, " + ", ".join(PERMISOS)
+            )
             .eq("nombre_usuario", nombre_usuario)
             .eq("activo", True)
             .single()
@@ -59,12 +69,7 @@ def login(nombre_usuario: str, contrasena: str, db: Client) -> dict:
     try:
         respuesta_rol = (
             db.table("roles")
-            .select(
-                "perm_inventario_entrada, perm_inventario_ajuste, perm_kardex, "
-                "perm_corte_caja, perm_modificar_precios, perm_cancelar_tickets, "
-                "perm_clientes, perm_descuentos, perm_reportes, perm_exportar, "
-                "perm_promociones, perm_administrar, perm_movimientos_caja, perm_devoluciones, perm_auditoria"
-            )
+            .select(", ".join(PERMISOS))
             .eq("id", usuario["rol_id"])
             .single()
             .execute()
@@ -76,29 +81,16 @@ def login(nombre_usuario: str, contrasena: str, db: Client) -> dict:
     if not rol:
         raise ErrorSesionInvalida()
 
-    # 4. Construir payload del JWT
+    # 4. Construir payload del JWT — permiso efectivo: override del usuario, si no hay, el del rol
     payload = {
         "usuario_id": str(usuario["id"]),
         "nombre_usuario": usuario["nombre_usuario"],
         "nombre_completo": usuario["nombre_completo"],
         "sucursal_id": str(usuario["sucursal_id"]),
         "rol_id": str(usuario["rol_id"]),
-        "perm_inventario_entrada": rol["perm_inventario_entrada"],
-        "perm_inventario_ajuste": rol["perm_inventario_ajuste"],
-        "perm_kardex": rol["perm_kardex"],
-        "perm_corte_caja": rol["perm_corte_caja"],
-        "perm_modificar_precios": rol["perm_modificar_precios"],
-        "perm_cancelar_tickets": rol["perm_cancelar_tickets"],
-        "perm_clientes": rol["perm_clientes"],
-        "perm_descuentos": rol["perm_descuentos"],
-        "perm_reportes": rol["perm_reportes"],
-        "perm_exportar": rol["perm_exportar"],
-        "perm_promociones": rol["perm_promociones"],
-        "perm_administrar": rol["perm_administrar"],
-        "perm_movimientos_caja": rol["perm_movimientos_caja"],
-        "perm_devoluciones":rol["perm_devoluciones"],
-        "perm_auditoria":rol["perm_auditoria"]
     }
+    for p in PERMISOS:
+        payload[p] = usuario[p] if usuario[p] is not None else rol[p]
 
     # 5. Actualizar ultimo_login
     db.table("usuarios").update(
@@ -117,3 +109,4 @@ def login(nombre_usuario: str, contrasena: str, db: Client) -> dict:
         "rol_id": usuario["rol_id"],
         "permisos": {k: v for k, v in payload.items() if k.startswith("perm_")},
     }
+

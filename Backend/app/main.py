@@ -24,6 +24,7 @@ from app.routes import auditoria_routes
 from app.routes import corte_routes
 from app.routes import reporte_routes   # ← agregar
 from app.routes import respaldo_routes  
+from app.routes import rol_routes
 # --- Scheduler para mantener activa la conexión con Supabase ---
 scheduler = AsyncIOScheduler()
 
@@ -81,3 +82,4 @@ app.include_router(sucursal_routes.router, prefix="/sucursales", tags=["Sucursal
 app.include_router(router_clientes, prefix="/clientes", tags=["Clientes"])
 app.include_router(auditoria_routes.router, tags=["Auditoria"])
 app.include_router(respaldo_routes.router, prefix="/respaldo", tags=["Respaldo"])
+app.include_router(rol_routes.router, prefix="/roles", tags=["Roles"])

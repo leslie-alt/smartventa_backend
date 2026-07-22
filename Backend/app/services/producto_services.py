@@ -119,19 +119,34 @@ def obtener_productos(sucursal_id: str, solo_activos: bool = True) -> list[dict]
     Retorna todos los productos de la sucursal con su existencia actual
     y el nombre de su categoría.
     Incluye stock_bajo = True cuando cantidad_actual <= inventario_minimo (RF-01.6).
+
+    Pagina la consulta de 1000 en 1000, porque Supabase limita cada
+    consulta a 1000 filas por defecto aunque no se pida explícitamente.
     """
-    query = (
-        supabase.table("productos")
-        .select("*, inventario(cantidad_actual), categorias(nombre)")
-        .eq("sucursal_id", sucursal_id)
-    )
-    if solo_activos:
-        query = query.eq("activo", True)
+    TAM_PAGINA = 1000
+    data_completa = []
+    inicio = 0
 
-    respuesta = query.order("descripcion").execute()
+    while True:
+        query = (
+            supabase.table("productos")
+            .select("*, inventario(cantidad_actual), categorias(nombre)")
+            .eq("sucursal_id", sucursal_id)
+        )
+        if solo_activos:
+            query = query.eq("activo", True)
+
+        fin = inicio + TAM_PAGINA - 1
+        respuesta = query.order("descripcion").range(inicio, fin).execute()
+        lote = respuesta.data or []
+        data_completa.extend(lote)
+
+        if len(lote) < TAM_PAGINA:
+            break
+        inicio += TAM_PAGINA
+
     productos = []
-
-    for p in respuesta.data:
+    for p in data_completa:
         inv = p.pop("inventario", None)
         cat = p.pop("categorias", None)
         cantidad_actual = inv[0]["cantidad_actual"] if inv else 0
@@ -141,7 +156,6 @@ def obtener_productos(sucursal_id: str, solo_activos: bool = True) -> list[dict]
         productos.append(p)
 
     return productos
-
 
 def obtener_producto_por_id(producto_id: str, sucursal_id: str) -> dict:
     """Retorna un producto por ID verificando que pertenezca a la sucursal."""
