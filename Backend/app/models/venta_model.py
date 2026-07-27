@@ -84,6 +84,7 @@ class VentaArticuloOut(BaseModel):
     cantidad: int
     precio_unitario: Decimal
     uso_precio_mayoreo: bool
+    uso_promocion: bool
     descuento: Decimal
     subtotal: Decimal
 
@@ -141,3 +142,8 @@ class VentaOut(BaseModel):
     creado_en: datetime
     articulos: list[VentaArticuloOut] = []
     pagos: list[PagoOut] = []
+    cajero: Optional[str] = None
+    caja: Optional[str] = None
+    sucursal_nombre: Optional[str] = None
+    sucursal_direccion: Optional[str] = None
+    sucursal_telefono: Optional[str] = None

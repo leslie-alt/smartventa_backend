@@ -28,6 +28,12 @@ class Configuracion(BaseSettings):
         alias="ALLOWED_ORIGINS"
     )
 
+    # SMTP — envío de correos (reportes automáticos)
+    smtp_host: str = Field(default="smtp.gmail.com", alias="SMTP_HOST")
+    smtp_port: int = Field(default=587, alias="SMTP_PORT")
+    smtp_usuario: str = Field(default="", alias="SMTP_USUARIO")
+    smtp_contrasena: str = Field(default="", alias="SMTP_CONTRASENA")
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         # Validaciones al arrancar el servidor
@@ -37,6 +43,8 @@ class Configuracion(BaseSettings):
             print("ERROR: SUPABASE_KEY no cargada")
         if self.jwt_secret == "CAMBIAR_A_UN_SECRET_FUERTE":
             print("ADVERTENCIA: JWT_SECRET usando valor por defecto, cámbialo en producción")
+        if not self.smtp_usuario or not self.smtp_contrasena:
+            print("ADVERTENCIA: SMTP_USUARIO/SMTP_CONTRASENA no configurados, el envío de reportes por correo no funcionará")
 
     @field_validator("allowed_origins", mode="before")
     @classmethod

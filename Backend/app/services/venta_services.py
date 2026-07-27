@@ -166,6 +166,7 @@ def _calcular_linea(producto: dict, cantidad: int, mayoreo_ticket: bool, forzar_
         "precio_unitario": _redondear(precio_unitario),
         "descuento": descuento,
         "uso_precio_mayoreo": uso_precio_mayoreo,
+        "uso_promocion": promo is not None,
         "subtotal": subtotal,
         "costo_unitario": producto["costo_unitario"],
     }
@@ -308,6 +309,7 @@ def _calcular_articulos_y_total(
             "cantidad": cantidad,
             "precio_unitario": float(calculo["precio_unitario"]),
             "uso_precio_mayoreo": calculo["uso_precio_mayoreo"],
+            "uso_promocion": calculo["uso_promocion"],
             "descuento": float(calculo["descuento"]),
             "costo_unitario": float(calculo["costo_unitario"]),
         })
@@ -454,7 +456,12 @@ def obtener_venta(venta_id: str, sucursal_id: str) -> dict:
     respuesta = (
         supabase.table("ventas")
         .select(
-            "*, venta_articulos(*, productos(descripcion)), pagos(*)"
+            "*, "
+            "venta_articulos(*, productos(descripcion)), "
+            "pagos(*), "
+            "usuarios!ventas_usuario_id_fkey(nombre_completo), "
+            "cajas(nombre), "
+            "sucursales(nombre, direccion, telefono)"
         )
         .eq("id", venta_id)
         .eq("sucursal_id", sucursal_id)
@@ -463,8 +470,28 @@ def obtener_venta(venta_id: str, sucursal_id: str) -> dict:
     )
     if not respuesta.data:
         raise HTTPException(status_code=404, detail="Venta no encontrada")
-    return respuesta.data
 
+    v = respuesta.data
+
+# Aplanar artículos: Supabase regresa "venta_articulos", el modelo espera "articulos"
+    articulos = v.pop("venta_articulos", None) or []
+    for a in articulos:
+        producto = a.pop("productos", None)
+        a["descripcion"] = producto["descripcion"] if producto else None
+        # "subtotal" no es columna real de venta_articulos — se calcula aquí
+        a["subtotal"] = float(a["precio_unitario"]) * a["cantidad"] - float(a.get("descuento") or 0)
+    v["articulos"] = articulos
+    # Cajero, caja y sucursal — para que el ticket impreso los tenga
+    usuario = v.pop("usuarios", None)
+    caja = v.pop("cajas", None)
+    sucursal = v.pop("sucursales", None)
+    v["cajero"] = usuario["nombre_completo"] if usuario else None
+    v["caja"] = caja["nombre"] if caja else None
+    v["sucursal_nombre"] = sucursal["nombre"] if sucursal else None
+    v["sucursal_direccion"] = sucursal["direccion"] if sucursal else None
+    v["sucursal_telefono"] = sucursal["telefono"] if sucursal else None
+
+    return v
 
 
 def listar_ventas_dia(

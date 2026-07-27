@@ -25,6 +25,13 @@ from app.routes import corte_routes
 from app.routes import reporte_routes   # ← agregar
 from app.routes import respaldo_routes  
 from app.routes import rol_routes
+from app.routes import destinatario_reporte_routes  
+from app.services import reporte_email_services   # ← agregar
+from zoneinfo import ZoneInfo 
+
+
+
+
 # --- Scheduler para mantener activa la conexión con Supabase ---
 scheduler = AsyncIOScheduler()
 
@@ -35,10 +42,27 @@ async def ping_db():
     except Exception:
         pass  # Silencioso — solo es keep-alive
 
+
+async def enviar_reportes_diarios():
+    """Envía los reportes por correo pendientes del día (RF-14 — reportes automáticos)."""
+    try:
+        resultado = reporte_email_services.enviar_reportes_pendientes()
+        print(f"[Reportes] Enviados: {resultado['enviados']}, errores: {len(resultado['errores'])}")
+        if resultado["errores"]:
+            print(f"[Reportes] Detalle de errores: {resultado['errores']}")
+    except Exception as e:
+        print(f"[Reportes] Error general al enviar reportes: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Ciclo de vida de la app: inicia y detiene el scheduler."""
     scheduler.add_job(ping_db, "interval", minutes=4)
+    scheduler.add_job(
+        enviar_reportes_diarios, "cron",
+        hour=7, minute=0,
+        timezone=ZoneInfo("America/Mexico_City"),
+    )
     scheduler.start()
     yield
     scheduler.shutdown()
@@ -83,3 +107,4 @@ app.include_router(router_clientes, prefix="/clientes", tags=["Clientes"])
 app.include_router(auditoria_routes.router, tags=["Auditoria"])
 app.include_router(respaldo_routes.router, prefix="/respaldo", tags=["Respaldo"])
 app.include_router(rol_routes.router, prefix="/roles", tags=["Roles"])
+app.include_router(destinatario_reporte_routes.router, prefix="/destinatarios-reportes", tags=["Reportes por correo"])
