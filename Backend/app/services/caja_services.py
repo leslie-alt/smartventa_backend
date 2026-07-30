@@ -29,30 +29,7 @@ def obtener_caja(caja_id: str, sucursal_id: str) -> dict:
 
 
 def crear_caja(sucursal_id: str, datos: dict) -> dict:
-    """Crea una caja nueva (RF-04.3: máx 5 de venta + 1 verificador por sucursal)."""
-    # Validar límites antes de insertar
-    existentes = (
-        supabase.table("cajas")
-        .select("id, es_verificador")
-        .eq("sucursal_id", sucursal_id)
-        .eq("activa", True)
-        .execute()
-    ).data or []
-
-    verificadores = [c for c in existentes if c["es_verificador"]]
-    venta = [c for c in existentes if not c["es_verificador"]]
-
-    if datos["es_verificador"] and len(verificadores) >= 1:
-        raise HTTPException(
-            status_code=409,
-            detail="Ya existe una estación verificadora en esta sucursal.",
-        )
-    if not datos["es_verificador"] and len(venta) >= 5:
-        raise HTTPException(
-            status_code=409,
-            detail="Se alcanzó el límite de 5 cajas de venta por sucursal.",
-        )
-
+    """Crea una caja nueva."""
     try:
         respuesta = (
             supabase.table("cajas")
@@ -61,10 +38,46 @@ def crear_caja(sucursal_id: str, datos: dict) -> dict:
                 "nombre": datos["nombre"],
                 "es_verificador": datos["es_verificador"],
                 "activa": True,
+                "impresora_tipo": datos.get("impresora_tipo"),
+                "impresora_valor": datos.get("impresora_valor"),
+                "impresora_puerto": datos.get("impresora_puerto"),
             })
             .execute()
         )
     except Exception:
         raise HTTPException(status_code=500, detail="No se pudo crear la caja.")
+
+    return respuesta.data[0]
+
+def actualizar_caja(caja_id: str, sucursal_id: str, datos: dict) -> dict:
+    """Actualiza una caja existente, incluyendo su configuración de impresora."""
+    actual = (
+        supabase.table("cajas")
+        .select("id, es_verificador, activa")
+        .eq("id", caja_id)
+        .eq("sucursal_id", sucursal_id)
+        .single()
+        .execute()
+    )
+    if not actual.data:
+        raise HTTPException(status_code=404, detail="Caja no encontrada en esta sucursal")
+
+    try:
+        respuesta = (
+            supabase.table("cajas")
+            .update({
+                "nombre": datos["nombre"],
+                "es_verificador": datos["es_verificador"],
+                "activa": datos["activa"],
+                "impresora_tipo": datos.get("impresora_tipo"),
+                "impresora_valor": datos.get("impresora_valor"),
+                "impresora_puerto": datos.get("impresora_puerto"),
+            })
+            .eq("id", caja_id)
+            .eq("sucursal_id", sucursal_id)
+            .execute()
+        )
+    except Exception:
+        raise HTTPException(status_code=500, detail="No se pudo actualizar la caja.")
 
     return respuesta.data[0]

@@ -1,4 +1,3 @@
-# caja_model.py
 from datetime import datetime
 from typing import Optional
 from uuid import UUID
@@ -26,6 +25,15 @@ class CajaList(BaseModel):
 class CajaCreate(BaseModel):
     nombre: str = Field(min_length=1, max_length=60)
     es_verificador: bool = False
+    impresora_tipo: Optional[str] = None
+    impresora_valor: Optional[str] = None
+    impresora_puerto: Optional[int] = None
+
+
+class CajaActualizar(BaseModel):
+    nombre: str = Field(min_length=1, max_length=60)
+    es_verificador: bool
+    activa: bool = True
     impresora_tipo: Optional[str] = None
     impresora_valor: Optional[str] = None
     impresora_puerto: Optional[int] = None

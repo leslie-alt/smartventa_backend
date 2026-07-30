@@ -51,4 +51,5 @@ class ProductoBusquedaKardex(BaseModel):
     id: UUID
     codigo_barras: str | None
     descripcion: str
+    ruta_imagen: str | None
     cantidad_actual: int

@@ -357,15 +357,39 @@ def actualizar_producto(
     actualizado = respuesta.data[0]
 
     # Kardex si cambió el costo unitario
-    if "costo_unitario" in datos and datos["costo_unitario"] != anterior["costo_unitario"]:
+   # Kardex si cambió costo, precio de venta o precio de mayoreo (RF-03.4).
+    # Se comparan como float para evitar falsos positivos por diferencia
+    # de tipos entre lo que devuelve Supabase (Decimal/str) y lo que llega
+    # del request (float) — antes esto generaba un registro de kardex
+    # aunque el valor no hubiera cambiado realmente.
+    campos_precio_kardex = {
+        "costo_unitario": "Costo",
+        "precio_venta": "Precio Venta",
+        "precio_mayoreo": "Precio Mayoreo",
+    }
+    cambios_detectados = []
+    for campo, etiqueta in campos_precio_kardex.items():
+        if campo not in datos:
+            continue
+        valor_anterior = float(anterior[campo])
+        valor_nuevo = float(datos[campo])
+        if valor_anterior != valor_nuevo:
+            cambios_detectados.append((etiqueta, valor_anterior, valor_nuevo))
+
+    if cambios_detectados:
         existencia = _obtener_existencia(producto_id, sucursal_id)
+        notas = "; ".join(
+            f"{etiqueta}: ${anterior_v} → ${nuevo_v}"
+            for etiqueta, anterior_v, nuevo_v in cambios_detectados
+        )
         _registrar_kardex_cambio_precio(
             producto_id=producto_id,
             sucursal_id=sucursal_id,
             usuario_id=usuario_id,
             costo_anterior=float(anterior["costo_unitario"]),
-            costo_nuevo=float(datos["costo_unitario"]),
+            costo_nuevo=float(datos.get("costo_unitario", anterior["costo_unitario"])),
             existencia_actual=existencia,
+            notas=notas,
         )
 
     # Auditoría
@@ -432,7 +456,7 @@ def exportar_productos_excel(sucursal_id: str, solo_plantilla: bool = False) -> 
     if solo_plantilla:
         productos = []
     else:
-        productos = obtener_productos(sucursal_id, solo_activos=False)
+        productos = _obtener_productos_para_exportar(sucursal_id)   # antes: obtener_productos(...)
 
     # Construir filas con el nombre de la categoría (no el UUID)
     filas = [{
@@ -531,6 +555,8 @@ def importar_productos_excel(
     nombres_categorias_nuevas = set()
     for _, fila in df.iterrows():
         nombre_cat = str(fila.get("Categoría", "")).strip()
+        if nombre_cat.lower() == "nan":  # celda vacía → pandas la lee como NaN
+            nombre_cat = ""
         if nombre_cat and nombre_cat.lower() not in categorias_existentes:
             nombres_categorias_nuevas.add(nombre_cat)
 
@@ -564,8 +590,11 @@ def importar_productos_excel(
                 errores.append({"fila": numero_fila, "motivo": "Descripción vacía."})
                 continue
 
+          
             # Resolver categoría (ya están precargadas)
             nombre_cat = str(fila.get("Categoría", "")).strip()
+            if nombre_cat.lower() == "nan":  # celda vacía → pandas la lee como NaN
+                nombre_cat = ""
             categoria_id = (
                 categorias_existentes.get(nombre_cat.lower())
                 if nombre_cat else None
@@ -662,3 +691,34 @@ def obtener_categorias(sucursal_id: str) -> list[dict]:
         .execute()
     )
     return respuesta.data
+
+def _obtener_productos_para_exportar(sucursal_id: str) -> list[dict]:
+    """
+    Versión ligera de obtener_productos(), pensada solo para exportar (RF-01.5).
+    Trae únicamente las columnas necesarias, sin el overhead de traer '*'.
+    """
+    TAM_PAGINA = 1000
+    data_completa = []
+    inicio = 0
+
+    while True:
+        fin = inicio + TAM_PAGINA - 1
+        respuesta = (
+            supabase.table("productos")
+            .select(
+                "codigo_barras, descripcion, precio_venta, precio_mayoreo, "
+                "costo_unitario, inventario_minimo, "
+                "inventario(cantidad_actual), categorias(nombre)"
+            )
+            .eq("sucursal_id", sucursal_id)
+            .order("descripcion")
+            .range(inicio, fin)
+            .execute()
+        )
+        lote = respuesta.data or []
+        data_completa.extend(lote)
+        if len(lote) < TAM_PAGINA:
+            break
+        inicio += TAM_PAGINA
+
+    return data_completa

@@ -187,91 +187,51 @@ def listar_inventario(
 ) -> dict:
     """
     Retorna el listado paginado de productos con su existencia actual.
-    Incluye filtros por código/descripción y categoría.
-    Calcula el resumen para las tarjetas superiores (RF-01.6).
+    Incluye filtros por código/descripción, categoría y stock bajo (RF-01.6).
+
+    Usa el RPC obtener_inventario, que hace el filtrado, conteo y
+    paginación directamente en Postgres — necesario porque stock_bajo
+    compara columnas de dos tablas distintas (inventario.cantidad_actual
+    vs productos.inventario_minimo), algo que el cliente supabase-py no
+    puede filtrar sin traer todos los registros a Python.
     """
-    desde = (pagina - 1) * por_pagina
-    hasta = desde + por_pagina - 1
+    resultado = supabase.rpc("obtener_inventario", {
+        "p_sucursal_id": sucursal_id,
+        "p_termino": termino,
+        "p_categoria_id": categoria_id,
+        "p_solo_stock_bajo": solo_stock_bajo,
+        "p_pagina": pagina,
+        "p_por_pagina": por_pagina,
+    }).execute()
 
-    # ── Conteo real de productos activos (sin límite de 1000) ──
-    query_count = (
-        supabase.table("productos")
-        .select("id", count="exact")
-        .eq("sucursal_id", sucursal_id)
-        .eq("activo", True)
-    )
-    if termino:
-        query_count = query_count.or_(
-            f"codigo_barras.ilike.%{termino}%,descripcion.ilike.%{termino}%"
-        )
-    if categoria_id:
-        query_count = query_count.eq("categoria_id", categoria_id)
-
-    respuesta_count = query_count.execute()
-    total_productos_activos = respuesta_count.count or 0
-
-    # ── Listado paginado de items ──
-    query = (
-        supabase.table("productos")
-        .select(
-            "id, codigo_barras, descripcion, categoria_id, inventario_minimo, "
-            "ruta_imagen, activo, "
-            "categorias(nombre), "
-            "inventario(cantidad_actual)"
-        )
-        .eq("sucursal_id", sucursal_id)
-        .eq("activo", True)
-    )
-
-    if termino:
-        query = query.or_(
-            f"codigo_barras.ilike.%{termino}%,descripcion.ilike.%{termino}%"
-        )
-    if categoria_id:
-        query = query.eq("categoria_id", categoria_id)
-
-    respuesta = query.order("descripcion").range(desde, hasta).execute()
-
-    items = []
-    productos_stock_bajo = 0
-
-    for p in respuesta.data:
-        inv = p.pop("inventario", None)
-        cantidad_actual = inv[0]["cantidad_actual"] if inv else 0
-        stock_bajo = cantidad_actual <= p["inventario_minimo"]
-
-        if stock_bajo:
-            productos_stock_bajo += 1
-
-        cat = p.pop("categorias", None)
-        items.append({
-            "producto_id": p["id"],
-            "codigo_barras": p["codigo_barras"],
-            "descripcion": p["descripcion"],
-            "categoria_nombre": cat["nombre"] if cat else None,
-            "cantidad_actual": cantidad_actual,
-            "inventario_minimo": p["inventario_minimo"],
-            "stock_bajo": stock_bajo,
-            "ruta_imagen": p["ruta_imagen"],
-            "activo": p["activo"],
-        })
-
-    # ── Conteo real de stock bajo (consulta separada, sin límite) ──
-    # Nota: esto requiere traer cantidad_actual de TODOS los productos
-    # para calcularlo correctamente. Si la tabla es muy grande, lo ideal
-    # es tener esto precalculado en una vista de BD o columna calculada.
-    # Por ahora se deja aproximado al total de la página actual + se
-    # recomienda que el conteo total de stock bajo se calcule aparte
-    # con una función RPC en Supabase si se requiere exacto.
+    data = resultado.data or {}
+    items = data.get("items") or []
+    total_activos = data.get("total_productos_activos", 0)
+    total_stock_bajo = data.get("total_stock_bajo", 0)
+    total_filtrado = data.get("total_filtrado", 0)
 
     return {
         "resumen": {
-            "productos_activos": total_productos_activos,
-            "productos_stock_bajo": productos_stock_bajo,  # de esta página
+            "productos_activos": total_activos,
+            "productos_stock_bajo": total_stock_bajo,
         },
-        "total": total_productos_activos,
+        "total": total_filtrado,
         "pagina": pagina,
         "por_pagina": por_pagina,
-        "total_paginas": (total_productos_activos + por_pagina - 1) // por_pagina,
-        "items": items,
+        "total_paginas": (total_filtrado + por_pagina - 1) // por_pagina if total_filtrado else 1,
+        "items": [
+            {
+                "producto_id": it["producto_id"],
+                "codigo_barras": it["codigo_barras"],
+                "descripcion": it["descripcion"],
+                "categoria_nombre": it["categoria_nombre"],
+                "cantidad_actual": it["cantidad_actual"],
+                "inventario_minimo": it["inventario_minimo"],
+                "stock_bajo": it["stock_bajo"],
+                "ruta_imagen": it["ruta_imagen"],
+                "activo": it["activo"],
+            }
+            for it in items
+        ],
     }
+   

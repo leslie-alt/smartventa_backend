@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends
 from uuid import UUID
 
 from app.core.deps import obtener_usuario_actual, verificar_permiso
-from app.models.caja_model import CajaOut, CajaList, CajaCreate
+from app.models.caja_model import CajaOut, CajaList, CajaCreate, CajaActualizar
 from app.services import caja_services
 
 router = APIRouter()
@@ -40,6 +40,20 @@ def crear_caja(
 ):
     """Crea una caja de venta o estación verificadora (RF-04.3)."""
     return caja_services.crear_caja(
+        sucursal_id=usuario["sucursal_id"],
+        datos=datos.model_dump(),
+    )
+
+
+@router.put("/{caja_id}", response_model=CajaOut)
+def actualizar_caja(
+    caja_id: UUID,
+    datos: CajaActualizar,
+    usuario: dict = Depends(verificar_permiso("perm_administrar")),
+):
+    """Actualiza una caja existente, incluyendo su configuración de impresora."""
+    return caja_services.actualizar_caja(
+        caja_id=str(caja_id),
         sucursal_id=usuario["sucursal_id"],
         datos=datos.model_dump(),
     )

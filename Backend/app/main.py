@@ -28,6 +28,7 @@ from app.routes import rol_routes
 from app.routes import destinatario_reporte_routes  
 from app.services import reporte_email_services   # ← agregar
 from zoneinfo import ZoneInfo 
+from app.routes import dashboard_dueno_routes
 
 
 
@@ -108,3 +109,4 @@ app.include_router(auditoria_routes.router, tags=["Auditoria"])
 app.include_router(respaldo_routes.router, prefix="/respaldo", tags=["Respaldo"])
 app.include_router(rol_routes.router, prefix="/roles", tags=["Roles"])
 app.include_router(destinatario_reporte_routes.router, prefix="/destinatarios-reportes", tags=["Reportes por correo"])
+app.include_router(dashboard_dueno_routes.router)

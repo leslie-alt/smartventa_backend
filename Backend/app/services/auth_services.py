@@ -38,7 +38,7 @@ def login(nombre_usuario: str, contrasena: str, db: Client) -> dict:
         "perm_corte_caja", "perm_modificar_precios", "perm_cancelar_tickets",
         "perm_clientes", "perm_descuentos", "perm_reportes", "perm_exportar",
         "perm_promociones", "perm_administrar", "perm_movimientos_caja",
-        "perm_devoluciones", "perm_auditoria",
+        "perm_devoluciones", "perm_auditoria","perm_dueno"
     ]
 
     # 1. Buscar usuario (ahora incluyendo sus posibles overrides de permisos)

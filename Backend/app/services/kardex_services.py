@@ -18,8 +18,9 @@ def buscar_productos_kardex(
 
     respuesta = (
         supabase.table("productos")
-        .select("id, codigo_barras, descripcion, inventario(cantidad_actual)")
+        .select("id, codigo_barras, descripcion, ruta_imagen, inventario(cantidad_actual)")
         .eq("sucursal_id", sucursal_id)
+        .eq("activo", True)
         .or_(f"codigo_barras.ilike.%{termino}%,descripcion.ilike.%{termino}%")
         .order("descripcion")
         .limit(20)
@@ -33,6 +34,7 @@ def buscar_productos_kardex(
             "id": p["id"],
             "codigo_barras": p["codigo_barras"],
             "descripcion": p["descripcion"],
+            "ruta_imagen": p["ruta_imagen"],
             "cantidad_actual": inv[0]["cantidad_actual"] if inv else 0,
         })
 
