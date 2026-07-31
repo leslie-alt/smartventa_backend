@@ -14,17 +14,24 @@ router = APIRouter()
 
 @router.get("/")
 def consultar_corte(
-    caja_id: UUID,
     fecha: str,
+    caja_id: UUID | None = None,
     usuario: dict = Depends(verificar_permiso("perm_corte_caja")),
 ):
     """
-    Corte de caja de consulta: calcula al vuelo el corte de una caja
-    en una fecha específica (AAAA-MM-DD). No cierra nada.
+    Corte de caja de consulta (AAAA-MM-DD). No cierra nada.
+    - Si se especifica caja_id: corte de esa caja únicamente.
+    - Si NO se especifica: corte CONSOLIDADO de todas las cajas de la
+      sucursal, desglosado por caja, incluyendo turnos aún abiertos.
     Requiere permiso perm_corte_caja.
     """
-    return corte_services.corte_por_caja_dia(
-        caja_id=str(caja_id),
+    if caja_id:
+        return corte_services.corte_por_caja_dia(
+            caja_id=str(caja_id),
+            sucursal_id=usuario["sucursal_id"],
+            fecha=fecha,
+        )
+    return corte_services.corte_consolidado_dia(
         sucursal_id=usuario["sucursal_id"],
         fecha=fecha,
     )

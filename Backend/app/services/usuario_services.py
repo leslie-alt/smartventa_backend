@@ -8,29 +8,58 @@ PERMISOS = [
     "perm_corte_caja", "perm_modificar_precios", "perm_cancelar_tickets",
     "perm_clientes", "perm_descuentos", "perm_reportes", "perm_exportar",
     "perm_promociones", "perm_administrar", "perm_movimientos_caja",
-    "perm_devoluciones", "perm_auditoria",
+    "perm_devoluciones", "perm_auditoria", "perm_dueno",
 ]
 
-CAMPOS_USUARIO = "id, nombre_completo, nombre_usuario, activo, ultimo_login, creado_en, rol_id, " + ", ".join(PERMISOS)
+CAMPOS_USUARIO = "id, nombre_completo, nombre_usuario, activo, ultimo_login, creado_en, rol_id"
 CAMPOS_ROL_ANIDADO = "roles(nombre, " + ", ".join(PERMISOS) + ")"
 
 
-def _combinar_permisos(fila: dict) -> dict:
-    """Recibe una fila con campos perm_* del usuario + roles(...) anidado,
-    y regresa la fila limpia con los permisos EFECTIVOS (override si existe, si no, el del rol)."""
+def _aplanar_permisos_del_rol(fila: dict) -> dict:
     rol = fila.pop("roles", None) or {}
-    rol_nombre = rol.get("nombre")
-
     for p in PERMISOS:
-        valor_usuario = fila.get(p)
-        fila[p] = valor_usuario if valor_usuario is not None else rol.get(p, False)
-
-    fila["rol_nombre"] = rol_nombre
+        fila[p] = bool(rol.get(p, False))
+    fila["rol_nombre"] = rol.get("nombre")
     return fila
 
 
+def _nombre_rol_disponible(nombre_usuario: str, sucursal_id: str) -> str:
+    """
+    Genera un nombre de rol único basado en nombre_usuario. Cada usuario
+    tiene su propio rol exclusivo (nombrado igual a su nombre_usuario);
+    si ya existe uno con ese nombre (por ejemplo, al reemplazar permisos
+    en una edición, el rol anterior queda huérfano con el mismo nombre
+    base), se agrega un sufijo incremental para no chocar.
+    """
+    base = nombre_usuario.strip()
+    candidato = base
+    sufijo = 2
+    while True:
+        existente = (
+            supabase.table("roles")
+            .select("id")
+            .eq("sucursal_id", sucursal_id)
+            .eq("nombre", candidato)
+            .execute()
+        )
+        if not existente.data:
+            return candidato
+        candidato = f"{base}-{sufijo}"
+        sufijo += 1
+
+
+def _crear_rol_para_usuario(nombre_usuario: str, sucursal_id: str, permisos: dict) -> str:
+    """Crea un rol exclusivo con los permisos dados y retorna su id."""
+    nombre_rol = _nombre_rol_disponible(nombre_usuario, sucursal_id)
+    datos_rol = {"nombre": nombre_rol, "sucursal_id": sucursal_id}
+    for p in PERMISOS:
+        datos_rol[p] = bool(permisos.get(p, False))
+
+    respuesta = supabase.table("roles").insert(datos_rol).execute()
+    return respuesta.data[0]["id"]
+
+
 def listar_usuarios(sucursal_id: str) -> dict:
-    """Lista todos los usuarios de la sucursal con su rol y permisos efectivos."""
     respuesta = (
         supabase.table("usuarios")
         .select(f"{CAMPOS_USUARIO}, {CAMPOS_ROL_ANIDADO}")
@@ -38,13 +67,16 @@ def listar_usuarios(sucursal_id: str) -> dict:
         .order("nombre_completo")
         .execute()
     )
-
-    items = [_combinar_permisos(u) for u in respuesta.data]
+    items = [_aplanar_permisos_del_rol(u) for u in respuesta.data]
     return {"total": len(items), "items": items}
 
 
 def crear_usuario(datos: dict, sucursal_id: str) -> dict:
-    """Crea un nuevo usuario con contraseña hasheada."""
+    """
+    Crea un usuario y, junto con él, un rol exclusivo nombrado igual a su
+    nombre_usuario con los permisos indicados en el formulario (RF-08.4:
+    cada empleado tiene su propio conjunto de permisos).
+    """
     existente = (
         supabase.table("usuarios")
         .select("id")
@@ -54,13 +86,16 @@ def crear_usuario(datos: dict, sucursal_id: str) -> dict:
     if existente.data:
         raise ErrorConflicto("Ya existe un usuario con ese nombre de usuario.")
 
+    permisos = {p: datos.pop(p, False) for p in PERMISOS}
+    rol_id = _crear_rol_para_usuario(datos["nombre_usuario"], sucursal_id, permisos)
+
     contrasena_hash = generar_hash_contrasena(datos["contrasena"])
 
     respuesta = (
         supabase.table("usuarios")
         .insert({
             "sucursal_id": sucursal_id,
-            "rol_id": str(datos["rol_id"]),
+            "rol_id": rol_id,
             "nombre_completo": datos["nombre_completo"],
             "nombre_usuario": datos["nombre_usuario"],
             "contrasena_hash": contrasena_hash,
@@ -82,22 +117,35 @@ def obtener_usuario(usuario_id: str, sucursal_id: str) -> dict:
     )
     if not respuesta.data:
         raise ErrorNoEncontrado("Usuario")
-
-    return _combinar_permisos(respuesta.data)
+    return _aplanar_permisos_del_rol(respuesta.data)
 
 
 def actualizar_usuario(usuario_id: str, datos: dict, sucursal_id: str) -> dict:
+    """
+    Si el body trae algún perm_*, se crea un rol NUEVO con los permisos
+    resultantes (los no enviados conservan su valor actual) y se reasigna
+    rol_id. El rol anterior no se borra, queda disponible/huérfano.
+    """
+    permisos_enviados = {p: datos.pop(p) for p in PERMISOS if datos.get(p) is not None}
     cambios = {k: v for k, v in datos.items() if v is not None}
+
+    if permisos_enviados:
+        actual = obtener_usuario(usuario_id, sucursal_id)
+        permisos_finales = {p: actual[p] for p in PERMISOS}
+        permisos_finales.update(permisos_enviados)
+
+        nombre_para_rol = cambios.get("nombre_usuario", actual["nombre_usuario"])
+        nuevo_rol_id = _crear_rol_para_usuario(nombre_para_rol, sucursal_id, permisos_finales)
+        cambios["rol_id"] = nuevo_rol_id
+
     if not cambios:
         return obtener_usuario(usuario_id, sucursal_id)
-
-    if "rol_id" in cambios:
-        cambios["rol_id"] = str(cambios["rol_id"])
 
     supabase.table("usuarios").update(cambios).eq("id", usuario_id).eq("sucursal_id", sucursal_id).execute()
     return obtener_usuario(usuario_id, sucursal_id)
 
 
 def cambiar_estado_usuario(usuario_id: str, activo: bool, sucursal_id: str) -> dict:
+    """El rol asociado no se toca al desactivar — queda disponible."""
     supabase.table("usuarios").update({"activo": activo}).eq("id", usuario_id).eq("sucursal_id", sucursal_id).execute()
     return obtener_usuario(usuario_id, sucursal_id)

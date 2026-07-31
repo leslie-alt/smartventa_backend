@@ -10,6 +10,14 @@ from app.core.exceptions import ErrorSesionInvalida
 # Contexto para verificar hashes bcrypt
 contexto_hash = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
+PERMISOS = [
+    "perm_inventario_entrada", "perm_inventario_ajuste", "perm_kardex",
+    "perm_corte_caja", "perm_modificar_precios", "perm_cancelar_tickets",
+    "perm_clientes", "perm_descuentos", "perm_reportes", "perm_exportar",
+    "perm_promociones", "perm_administrar", "perm_movimientos_caja",
+    "perm_devoluciones", "perm_auditoria", "perm_dueno",
+]
+
 
 def verificar_contrasena(contrasena_plana: str, contrasena_hash: str) -> bool:
     """Compara la contraseña ingresada contra el hash almacenado."""
@@ -32,23 +40,19 @@ def generar_token(payload: dict) -> str:
     datos["exp"] = expiracion
     return jwt.encode(datos, config.jwt_secret, algorithm=config.jwt_algoritmo)
 
-def login(nombre_usuario: str, contrasena: str, db: Client) -> dict:
-    PERMISOS = [
-        "perm_inventario_entrada", "perm_inventario_ajuste", "perm_kardex",
-        "perm_corte_caja", "perm_modificar_precios", "perm_cancelar_tickets",
-        "perm_clientes", "perm_descuentos", "perm_reportes", "perm_exportar",
-        "perm_promociones", "perm_administrar", "perm_movimientos_caja",
-        "perm_devoluciones", "perm_auditoria","perm_dueno"
-    ]
 
-    # 1. Buscar usuario (ahora incluyendo sus posibles overrides de permisos)
+def login(nombre_usuario: str, contrasena: str, db: Client) -> dict:
+    """
+    Los permisos SIEMPRE vienen del rol asignado (RF-08.2, RF-08.4) — ya no
+    existen overrides individuales por usuario. 'usuarios' ya no tiene
+    columnas perm_* (se eliminaron); los permisos se resuelven vía JOIN
+    con 'roles', que ahora es exclusivo por usuario (un rol = un usuario).
+    """
+    # 1. Buscar usuario (sin columnas perm_*, ya no existen)
     try:
         respuesta = (
             db.table("usuarios")
-            .select(
-                "id, nombre_completo, nombre_usuario, contrasena_hash, activo, "
-                "sucursal_id, rol_id, " + ", ".join(PERMISOS)
-            )
+            .select("id, nombre_completo, nombre_usuario, contrasena_hash, activo, sucursal_id, rol_id")
             .eq("nombre_usuario", nombre_usuario)
             .eq("activo", True)
             .single()
@@ -65,7 +69,7 @@ def login(nombre_usuario: str, contrasena: str, db: Client) -> dict:
     if not verificar_contrasena(contrasena, usuario["contrasena_hash"]):
         raise ErrorSesionInvalida()
 
-    # 3. Buscar permisos del rol por separado
+    # 3. Permisos del rol — única fuente de verdad
     try:
         respuesta_rol = (
             db.table("roles")
@@ -81,7 +85,7 @@ def login(nombre_usuario: str, contrasena: str, db: Client) -> dict:
     if not rol:
         raise ErrorSesionInvalida()
 
-    # 4. Construir payload del JWT — permiso efectivo: override del usuario, si no hay, el del rol
+    # 4. Construir payload del JWT — permiso = lo que diga el rol, sin excepciones
     payload = {
         "usuario_id": str(usuario["id"]),
         "nombre_usuario": usuario["nombre_usuario"],
@@ -90,7 +94,7 @@ def login(nombre_usuario: str, contrasena: str, db: Client) -> dict:
         "rol_id": str(usuario["rol_id"]),
     }
     for p in PERMISOS:
-        payload[p] = usuario[p] if usuario[p] is not None else rol[p]
+        payload[p] = bool(rol.get(p, False))
 
     # 5. Actualizar ultimo_login
     db.table("usuarios").update(
@@ -109,4 +113,3 @@ def login(nombre_usuario: str, contrasena: str, db: Client) -> dict:
         "rol_id": usuario["rol_id"],
         "permisos": {k: v for k, v in payload.items() if k.startswith("perm_")},
     }
-
