@@ -262,10 +262,6 @@ def _calcular_articulos_y_total(
     tiene_perm_descuentos: bool,
     tiene_tarjeta: bool,
 ) -> tuple[list[dict], Decimal, bool, str]:
-    """Lógica compartida entre crear_venta y guardar_ticket_pendiente.
-    Mayoreo POR PRODUCTO (RF-05.1): cada línea lleva mayoreo si su propio
-    subtotal a precio de mayoreo supera $350, o si el cliente es mayorista.
-    Tarjeta nunca lleva mayoreo (RF-05.3); promoción activa lo anula (RF-05.5)."""
     hay_forzados = any(a.get("forzar_mayoreo") for a in articulos_in)
     if hay_forzados and not tiene_perm_descuentos:
         raise HTTPException(status_code=403, detail="No tienes permiso para forzar precio de mayoreo (perm_descuentos)")
@@ -274,6 +270,14 @@ def _calcular_articulos_y_total(
     if cliente_id:
         cliente_es_mayorista = _obtener_cliente_es_mayorista(str(cliente_id), sucursal_id)
 
+    # RF-05.1 (ajustado): el umbral de $350 se evalúa sobre la SUMA del ticket
+    # completo a precio de mayoreo, no por línea individual.
+    suma_mayoreo_ticket = sum(
+        Decimal(str(productos[str(art["producto_id"])]["precio_mayoreo"])) * art["cantidad"]
+        for art in articulos_in
+    )
+    ticket_califica_por_monto = suma_mayoreo_ticket > Decimal("350.00")
+
     articulos_calculados = []
     total = Decimal("0")
     motivo_mayoreo = "ninguno"
@@ -281,18 +285,19 @@ def _calcular_articulos_y_total(
     for art in articulos_in:
         producto = productos[str(art["producto_id"])]
         cantidad = art["cantidad"]
-        precio_mayoreo = Decimal(str(producto["precio_mayoreo"]))
-        forzar = bool(art.get("forzar_mayoreo")) and not tiene_tarjeta  # RF-05.3 absoluto
+        forzar = bool(art.get("forzar_mayoreo")) and not tiene_tarjeta      # RF-05.3 absoluto
+        excluir = bool(art.get("excluir_mayoreo")) and not forzar          # forzar siempre gana sobre excluir
 
-        # ¿Esta línea califica para mayoreo por monto? Umbral sobre precio de mayoreo.
+        # ¿Esta línea entra en mayoreo automático? Ahora depende del ticket completo.
         mayoreo_linea = False
-        if not tiene_tarjeta:
+        if not tiene_tarjeta and not excluir:
             if cliente_es_mayorista:
                 mayoreo_linea = True
-            elif precio_mayoreo * cantidad > Decimal("350.00"):
+            elif ticket_califica_por_monto:
                 mayoreo_linea = True
 
         calculo = _calcular_linea(producto, cantidad, mayoreo_linea, forzar_mayoreo=forzar)
+        calculo["excluir_mayoreo"] = excluir
         total += calculo["subtotal"]
 
         # Motivo predominante del ticket (RF-05.6): manual > cliente > monto
@@ -310,6 +315,7 @@ def _calcular_articulos_y_total(
             "precio_unitario": float(calculo["precio_unitario"]),
             "uso_precio_mayoreo": calculo["uso_precio_mayoreo"],
             "uso_promocion": calculo["uso_promocion"],
+            "excluir_mayoreo": calculo["excluir_mayoreo"],
             "descuento": float(calculo["descuento"]),
             "costo_unitario": float(calculo["costo_unitario"]),
         })
@@ -351,6 +357,7 @@ def guardar_ticket_pendiente(
             "p_motivo_mayoreo": motivo_mayoreo,
             "p_notas": datos.get("notas"),
             "p_articulos": articulos_calc,
+            "p_nombre_ticket": datos.get("nombre_ticket"),
         },
     ).execute()
     print("DEBUG registrar_venta_completa resultado.data:", resultado.data)
@@ -362,7 +369,11 @@ def guardar_ticket_pendiente(
 def listar_tickets_pendientes(caja_id: str, sucursal_id: str) -> list[dict]:
     respuesta = (
         supabase.table("ventas")
-        .select("*, venta_articulos(*, productos(descripcion, codigo_barras, ruta_imagen))")
+        .select(
+            "*, venta_articulos(*, productos("
+            "descripcion, codigo_barras, ruta_imagen, precio_mayoreo"
+            "))"
+        )
         .eq("caja_id", caja_id)
         .eq("sucursal_id", sucursal_id)
         .eq("estado", "pendiente")

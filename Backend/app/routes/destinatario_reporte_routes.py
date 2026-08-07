@@ -60,15 +60,30 @@ def enviar_ahora(
     destinatario_id: UUID,
     usuario: dict = Depends(verificar_permiso("perm_administrar")),
 ):
-    """Envía el reporte a un destinatario específico de inmediato (prueba)."""
+    """Envía el resumen DIARIO a un destinatario de inmediato (prueba/consulta bajo demanda)."""
     destinatario = destinatario_reporte_services.obtener_destinatario(
         destinatario_id=str(destinatario_id),
         sucursal_id=usuario["sucursal_id"],
     )
-    reporte_email_services.enviar_reporte_destinatario(destinatario, usuario["sucursal_id"])
-    return {"mensaje": f"Reporte enviado a {destinatario['correo']}."}
+    reporte_email_services.enviar_reporte_destinatario(
+        destinatario, usuario["sucursal_id"], forzar_frecuencia="diario",
+    )
+    return {"mensaje": f"Reporte diario enviado a {destinatario['correo']}."}
 
-
+@router.post("/{destinatario_id}/enviar-ahora-semanal")
+def enviar_ahora_semanal(
+    destinatario_id: UUID,
+    usuario: dict = Depends(verificar_permiso("perm_administrar")),
+):
+    """Envía el resumen SEMANAL a un destinatario de inmediato (prueba/consulta bajo demanda)."""
+    destinatario = destinatario_reporte_services.obtener_destinatario(
+        destinatario_id=str(destinatario_id),
+        sucursal_id=usuario["sucursal_id"],
+    )
+    reporte_email_services.enviar_reporte_destinatario(
+        destinatario, usuario["sucursal_id"], forzar_frecuencia="semanal",
+    )
+    return {"mensaje": f"Resumen semanal enviado a {destinatario['correo']}."}
 @router.post("/enviar-pendientes", response_model=ResultadoEnvio)
 def enviar_pendientes(
     usuario: dict = Depends(verificar_permiso("perm_administrar")),

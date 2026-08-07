@@ -61,7 +61,7 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(ping_db, "interval", minutes=4)
     scheduler.add_job(
         enviar_reportes_diarios, "cron",
-        hour=7, minute=0,
+        hour=21, minute=59,
         timezone=ZoneInfo("America/Mexico_City"),
     )
     scheduler.start()

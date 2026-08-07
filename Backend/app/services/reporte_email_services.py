@@ -78,14 +78,14 @@ def _grafica_metodos_pago(por_metodo: dict):
     if not valores:
         return None
 
-    fig, ax = plt.subplots(figsize=(3.4, 3.4), dpi=200)
+    fig, ax = plt.subplots(figsize=(2.7, 2.4), dpi=200)
     wedges, _ = ax.pie(
         valores, colors=colores, startangle=90,
         wedgeprops=dict(width=0.42, edgecolor="white", linewidth=2),
     )
     ax.legend(
         wedges, [f"{l}  {_money(v)}" for l, v in zip(labels, valores)],
-        loc="center left", bbox_to_anchor=(1.02, 0.5), frameon=False, fontsize=8.5,
+        loc="center left", bbox_to_anchor=(1.0, 0.5), frameon=False, fontsize=7,
     )
     fig.patch.set_alpha(0)
     plt.tight_layout()
@@ -96,27 +96,33 @@ def _grafica_metodos_pago(por_metodo: dict):
     return buf
 
 
-def _grafica_cajeros(cajeros: list):
-    if not cajeros:
+def _grafica_barra_horizontal(items: list, top_n: int, formato_valor="dinero"):
+    """Barra horizontal compacta y reutilizable, para caber en un grid 2x1.
+    `items` es una lista de dicts con 'etiqueta' y 'valor'."""
+    if not items:
         return None
-    nombres = [c["nombre"] for c in cajeros]
-    totales = [c["total"] for c in cajeros]
-    maximo = max(totales)
+    recortados = items[:top_n]
+    etiquetas = [i["etiqueta"] for i in recortados]
+    valores = [i["valor"] for i in recortados]
+    maximo = max(valores)
 
-    fig, ax = plt.subplots(figsize=(6.2, max(1.5, 0.5 * len(cajeros) + 0.6)), dpi=200)
-    barras = ax.barh(nombres, totales, color="#6C0820", height=0.42, zorder=3)
+    fmt = (lambda v: _money(v)) if formato_valor == "dinero" else (lambda v: str(int(v)))
+
+    alto = max(1.3, 0.42 * len(recortados) + 0.5)
+    fig, ax = plt.subplots(figsize=(3.15, alto), dpi=200)
+    barras = ax.barh(etiquetas, valores, color="#6C0820", height=0.5, zorder=3)
     ax.invert_yaxis()
-    ax.set_xlim(0, maximo * 1.35)
+    ax.set_xlim(0, maximo * 1.42)
     for spine in ["top", "right", "left"]:
         ax.spines[spine].set_visible(False)
     ax.spines["bottom"].set_color("#E0C8C8")
-    ax.tick_params(axis="y", length=0, labelsize=9.5, colors="#3D5D91")
-    ax.tick_params(axis="x", length=0, labelsize=8, colors="#888")
+    ax.tick_params(axis="y", length=0, labelsize=8, colors="#3D5D91")
+    ax.tick_params(axis="x", length=0, labelsize=7, colors="#888")
     ax.xaxis.grid(True, color="#F2DCDB", zorder=0)
     ax.set_axisbelow(True)
-    for barra, total in zip(barras, totales):
-        ax.text(barra.get_width() + maximo * 0.03, barra.get_y() + barra.get_height() / 2,
-                 _money(total), va="center", fontsize=9, color="#1a1a2e", fontweight="bold")
+    for barra, valor in zip(barras, valores):
+        ax.text(barra.get_width() + maximo * 0.04, barra.get_y() + barra.get_height() / 2,
+                 fmt(valor), va="center", fontsize=7.5, color="#1a1a2e", fontweight="bold")
     fig.patch.set_alpha(0)
     plt.tight_layout()
     buf = BytesIO()
@@ -124,6 +130,9 @@ def _grafica_cajeros(cajeros: list):
     plt.close(fig)
     buf.seek(0)
     return buf
+
+
+
 
 
 def _grafica_ventas_dia(ventas_por_dia: list):
@@ -234,26 +243,61 @@ def _armar_pdf(sucursal_nombre: str, fecha_label: str, corte, ventas) -> bytes:
         ]))
         elementos.append(tabla_corte)
 
+    def _fila_dos_graficas(titulo_izq, img_izq, titulo_der, img_der):
+        """Arma una fila de 2 columnas: cada una con su título y su gráfica,
+        para que quepan lado a lado en media página."""
+        col_izq, col_der = [], []
+        if img_izq:
+            col_izq.append(Paragraph(titulo_izq, seccion_style))
+            col_izq.append(Image(img_izq, width=225, height=190, kind="proportional"))
+        if img_der:
+            col_der.append(Paragraph(titulo_der, seccion_style))
+            col_der.append(Image(img_der, width=225, height=190, kind="proportional"))
+        if not col_izq and not col_der:
+            return None
+        tabla = Table([[col_izq or "", col_der or ""]], colWidths=[255, 255])
+        tabla.setStyle(TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 0),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+        ]))
+        return tabla
+
     if ventas:
         img_dona = _grafica_metodos_pago(ventas["por_metodo"])
-        if img_dona:
-            elementos.append(Paragraph("Ventas por método de pago", seccion_style))
-            elementos.append(Image(img_dona, width=340, height=136))
+        cajeros_items = [{"etiqueta": c["nombre"], "valor": c["total"]} for c in ventas["cajeros"]]
+        img_cajeros = _grafica_barra_horizontal(cajeros_items, top_n=5, formato_valor="dinero")
 
-        img_cajeros = _grafica_cajeros(ventas["cajeros"])
-        if img_cajeros:
-            elementos.append(Paragraph("Ventas por cajero", seccion_style))
-            alto = max(190, 60 * len(ventas["cajeros"]))
-            elementos.append(Image(img_cajeros, width=460, height=alto))
+        fila1 = _fila_dos_graficas(
+            "Ventas por método de pago", img_dona,
+            "Ventas por cajero (top 5)", img_cajeros,
+        )
+        if fila1:
+            elementos.append(fila1)
 
-    tiene_pagina_2 = ventas and (ventas.get("ventas_por_dia") or ventas.get("turnos"))
+    tiene_pagina_2 = ventas and (
+        ventas.get("ventas_por_dia") or ventas.get("top_productos") or ventas.get("ventas_por_caja") or ventas.get("turnos")
+    )
     if tiene_pagina_2:
         elementos.append(PageBreak())
 
         img_dias = _grafica_ventas_dia(ventas.get("ventas_por_dia") or [])
         if img_dias:
             elementos.append(Paragraph("Tendencia de ventas por día", seccion_style))
-            elementos.append(Image(img_dias, width=480, height=210))
+            elementos.append(Image(img_dias, width=460, height=200, kind="proportional"))
+
+        productos_items = [{"etiqueta": p["descripcion"][:22], "valor": p["cantidad"]} for p in (ventas.get("top_productos") or [])]
+        img_productos = _grafica_barra_horizontal(productos_items, top_n=5, formato_valor="cantidad")
+
+        cajas_items = [{"etiqueta": c["caja_nombre"], "valor": c["total"]} for c in (ventas.get("ventas_por_caja") or [])]
+        img_cajas = _grafica_barra_horizontal(cajas_items, top_n=5, formato_valor="dinero") if len(ventas.get("ventas_por_caja") or []) > 1 else None
+
+        fila2 = _fila_dos_graficas(
+            "Productos más vendidos (top 5)", img_productos,
+            "Ventas por caja", img_cajas,
+        )
+        if fila2:
+            elementos.append(fila2)
 
         turnos = ventas.get("turnos") or []
         if turnos:
@@ -261,22 +305,23 @@ def _armar_pdf(sucursal_nombre: str, fecha_label: str, corte, ventas) -> bytes:
             encabezado = [["Caja", "Inicio", "Estado", "Tickets", "Total"]]
             filas = [
                 [t["caja_nombre"], t["inicio"][:16].replace("T", " "), t["estado"].capitalize(), str(t["tickets"]), _money(t["total"])]
-                for t in turnos
+                for t in turnos[:6]  # se recorta para no pasar de 2 páginas
             ]
             tabla_turnos = Table(encabezado + filas, colWidths=[80, 130, 80, 70, 100])
             tabla_turnos.setStyle(TableStyle([
                 ("FONTNAME", (0, 0), (-1, -1), "DMSans"),
-                ("FONTSIZE", (0, 0), (-1, -1), 9),
+                ("FONTSIZE", (0, 0), (-1, -1), 8.5),
                 ("BACKGROUND", (0, 0), (-1, 0), BURGUNDY),
                 ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-                ("FONTSIZE", (0, 0), (-1, 0), 8.5),
-                ("TOPPADDING", (0, 0), (-1, -1), 7),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+                ("FONTSIZE", (0, 0), (-1, 0), 8),
+                ("TOPPADDING", (0, 0), (-1, -1), 5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
                 ("ALIGN", (3, 0), (4, -1), "RIGHT"),
                 ("TEXTCOLOR", (0, 1), (-1, -1), TEXT),
                 ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, PINK_LIGHT]),
                 ("LINEBELOW", (0, 0), (-1, -1), 0.5, PINK_BORDER),
             ]))
+            elementos.append(Spacer(1, 8))
             elementos.append(tabla_turnos)
 
     elementos.append(Spacer(1, 24))
@@ -356,6 +401,11 @@ def _armar_html(sucursal_nombre: str, fecha_label: str, corte, ventas) -> str:
             for c in ventas["cajeros"][:5]
         ) or "<li>Sin ventas registradas</li>"
 
+        top_productos_html = "".join(
+            f"<li style='margin-bottom:4px;'>{p['descripcion']} — {p['cantidad']} unidades</li>"
+            for p in (ventas.get("top_productos") or [])[:10]
+        ) or "<li>Sin productos vendidos</li>"
+
         secciones += f"""
         <h2 style="font-family:'Playfair Display',serif;color:#6C0820;font-size:17px;margin:24px 0 10px;">
           Resumen de ventas — {ventas['fecha_inicio']} a {ventas['fecha_fin']}
@@ -368,8 +418,9 @@ def _armar_html(sucursal_nombre: str, fecha_label: str, corte, ventas) -> str:
           {_fila_html("Tarjeta", _money(ventas["por_metodo"]["tarjeta"]))}
         </table>
         <h3 style="font-size:14px;color:#3D5D91;margin:16px 0 6px;">Top cajeros</h3>
-        <ul style="font-size:13px;color:#555;padding-left:18px;margin:0;">{top_cajeros}</ul>"""
-
+        <ul style="font-size:13px;color:#555;padding-left:18px;margin:0;">{top_cajeros}</ul>
+        <h3 style="font-size:14px;color:#3D5D91;margin:16px 0 6px;">Top 10 productos más vendidos</h3>
+        <ul style="font-size:13px;color:#555;padding-left:18px;margin:0;">{top_productos_html}</ul>"""
     return f"""
     <div style="font-family:'DM Sans',Arial,sans-serif;max-width:560px;margin:0 auto;padding:24px;">
       <h1 style="font-family:'Playfair Display',serif;color:#6C0820;font-size:20px;margin:0 0 4px;">
@@ -389,12 +440,16 @@ def _armar_html(sucursal_nombre: str, fecha_label: str, corte, ventas) -> str:
 # FUNCIÓN PRINCIPAL — arma y envía el reporte de UN destinatario
 # =============================================================
 
-def enviar_reporte_destinatario(destinatario: dict, sucursal_id: str):
+def enviar_reporte_destinatario(destinatario: dict, sucursal_id: str, forzar_frecuencia: str):
     """
     Arma el PDF (corte + ventas, según lo que el destinatario tenga
     activado) y lo envía por correo. `destinatario` es una fila de
     destinatarios_reportes.
+    `forzar_frecuencia`, si se indica ('diario' o 'semanal'), ignora la
+    frecuencia guardada del destinatario solo para esta llamada — útil
+    para el botón "Enviar resumen semanal" bajo demanda.
     """
+
     sucursal = (
         supabase.table("sucursales")
         .select("nombre")
@@ -427,18 +482,25 @@ def enviar_reporte_destinatario(destinatario: dict, sucursal_id: str):
                 for k in corte["caja"]:
                     corte["caja"][k] += otro["caja"][k]
 
+    frecuencia_usada = forzar_frecuencia
+
     ventas = None
     if destinatario["recibe_ventas"]:
-        if destinatario["frecuencia"] == "semanal":
-            inicio = (hoy - timedelta(days=7)).isoformat()
+        if frecuencia_usada == "semanal":
+            # Semana pasada completa: lunes a domingo anteriores a hoy.
+            fin_semana = hoy - timedelta(days=1)            # domingo pasado
+            inicio_semana = fin_semana - timedelta(days=6)  # lunes pasado
+            inicio = inicio_semana.isoformat()
+            fin_para_ventas = fin_semana.isoformat()
         else:
             inicio = fecha_str
-        ventas = reporte_services.reporte_ventas(sucursal_id, inicio, fecha_str)
+            fin_para_ventas = fecha_str
+        ventas = reporte_services.reporte_ventas(sucursal_id, inicio, fin_para_ventas)
 
     pdf_bytes = _armar_pdf(sucursal_nombre, fecha_str, corte, ventas)
     html = _armar_html(sucursal_nombre, fecha_str, corte, ventas)
 
-    asunto = f"Reporte {destinatario['frecuencia']} — {sucursal_nombre} — {fecha_str}"
+    asunto = f"Reporte {frecuencia_usada} — {sucursal_nombre} — {fecha_str}"
     _enviar_correo(
         destinatario=destinatario["correo"],
         asunto=asunto,
@@ -450,11 +512,13 @@ def enviar_reporte_destinatario(destinatario: dict, sucursal_id: str):
 
 def enviar_reportes_pendientes():
     """
-    Recorre todos los destinatarios activos y envía su reporte si les
-    corresponde hoy (diario = todos los días, semanal = solo lunes).
+    Recorre todos los destinatarios activos y envía lo que les corresponda
+    hoy: el diario (si tienen recibe_diario) todos los días, y el semanal
+    (si tienen recibe_semanal) solo los sábados. Un destinatario puede
+    recibir ambos el mismo día si tiene las dos casillas activas.
     Pensado para llamarse una vez al día desde el scheduler.
     """
-    es_lunes = date.today().weekday() == 0  # 0 = lunes
+    es_sabado = date.today().weekday() == 5  # 5 = sábado
 
     destinatarios = (
         supabase.table("destinatarios_reportes")
@@ -465,12 +529,18 @@ def enviar_reportes_pendientes():
 
     enviados, errores = 0, []
     for d in destinatarios:
-        if d["frecuencia"] == "semanal" and not es_lunes:
-            continue
-        try:
-            enviar_reporte_destinatario(d, d["sucursal_id"])
-            enviados += 1
-        except Exception as e:
-            errores.append({"correo": d["correo"], "error": str(e)})
+        if d.get("recibe_diario"):
+            try:
+                enviar_reporte_destinatario(d, d["sucursal_id"], forzar_frecuencia="diario")
+                enviados += 1
+            except Exception as e:
+                errores.append({"correo": d["correo"], "tipo": "diario", "error": str(e)})
+
+        if d.get("recibe_semanal") and es_sabado:
+            try:
+                enviar_reporte_destinatario(d, d["sucursal_id"], forzar_frecuencia="semanal")
+                enviados += 1
+            except Exception as e:
+                errores.append({"correo": d["correo"], "tipo": "semanal", "error": str(e)})
 
     return {"enviados": enviados, "errores": errores}

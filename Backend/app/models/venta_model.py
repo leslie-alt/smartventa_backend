@@ -32,15 +32,16 @@ class EstadoVenta(str, Enum):
 class VentaArticuloCreate(BaseModel):
     producto_id: UUID
     cantidad: int = Field(gt=0)
-    forzar_mayoreo: bool = False   # ← nuevo: requiere perm_descuentos
-
+    forzar_mayoreo: bool = False    # fuerza mayoreo aunque el ticket no llegue a $350
+    excluir_mayoreo: bool = False   # excluye este producto del mayoreo automático del ticket
 
 class TicketPendienteGuardar(BaseModel):
     """Payload para crear/actualizar un ticket pendiente."""
-    caja_id: UUID                              # ← agregar
+    caja_id: UUID
     cliente_id: Optional[UUID] = None
     articulos: list[VentaArticuloCreate] = Field(min_length=1)
     notas: Optional[str] = None
+    nombre_ticket: Optional[str] = Field(default=None, max_length=60)
 
 
 
@@ -85,6 +86,7 @@ class VentaArticuloOut(BaseModel):
     precio_unitario: Decimal
     uso_precio_mayoreo: bool
     uso_promocion: bool
+    excluir_mayoreo: bool = False
     descuento: Decimal
     subtotal: Decimal
 

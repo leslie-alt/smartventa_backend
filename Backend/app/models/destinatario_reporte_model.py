@@ -9,7 +9,8 @@ class DestinatarioCreate(BaseModel):
     nombre: str | None = Field(default=None, max_length=150)
     recibe_corte: bool = True
     recibe_ventas: bool = True
-    frecuencia: Literal["diario", "semanal"] = "diario"
+    recibe_diario: bool = True
+    recibe_semanal: bool = False
 
 
 class DestinatarioUpdate(BaseModel):
@@ -17,7 +18,8 @@ class DestinatarioUpdate(BaseModel):
     nombre: str | None = Field(default=None, max_length=150)
     recibe_corte: bool | None = None
     recibe_ventas: bool | None = None
-    frecuencia: Literal["diario", "semanal"] | None = None
+    recibe_diario: bool | None = None
+    recibe_semanal: bool | None = None
     activo: bool | None = None
 
 
@@ -28,7 +30,8 @@ class DestinatarioOut(BaseModel):
     nombre: str | None = None
     recibe_corte: bool
     recibe_ventas: bool
-    frecuencia: str
+    recibe_diario: bool
+    recibe_semanal: bool
     activo: bool
     creado_en: datetime
 
