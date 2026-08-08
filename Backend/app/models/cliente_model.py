@@ -20,7 +20,6 @@ class ClienteUpdate(BaseModel):
     activo: Optional[bool] = None
     notas: Optional[str] = None
 
-
 class ClienteOut(BaseModel):
     id: UUID
     sucursal_id: UUID
@@ -29,6 +28,7 @@ class ClienteOut(BaseModel):
     correo: Optional[str] = None
     es_mayorista: bool
     activo: bool
+    notas: Optional[str] = None
     creado_en: datetime
     modificado_en: Optional[datetime] = None
 

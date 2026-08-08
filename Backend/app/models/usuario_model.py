@@ -65,6 +65,10 @@ class UsuarioOut(BaseModel):
     creado_en: datetime
     rol_id: UUID
     rol_nombre: str | None = None
+    # Solo se llena cuando un usuario edita SUS PROPIOS permisos — permite
+    # refrescar el JWT sin pedirle que vuelva a iniciar sesión. Si edita
+    # los permisos de OTRO usuario, este campo queda None.
+    nuevo_token: str | None = None
     perm_inventario_entrada: bool = False
     perm_inventario_ajuste: bool = False
     perm_kardex: bool = False

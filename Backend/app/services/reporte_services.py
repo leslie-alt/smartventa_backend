@@ -55,6 +55,20 @@ def reporte_ventas(
 
     ventas = query_ventas.execute().data or []
 
+    # Pagos reales de esas ventas (RF-06.4: soporta pago mixto). Se
+    # consultan aparte porque el desglose por método debe reflejar el
+    # monto real pagado en cada forma, no el total completo bajo "mixto"
+    # cuando metodo_pago_principal == 'mixto'.
+    venta_ids = [v["id"] for v in ventas]
+    pagos_ventas = []
+    if venta_ids:
+        pagos_ventas = (
+            supabase.table("pagos")
+            .select("venta_id, metodo, monto")
+            .in_("venta_id", venta_ids)
+            .execute()
+        ).data or []
+
     # Totales generales
     total_ventas = sum(float(v["total"] or 0) for v in ventas)
     total_tickets = len(ventas)
@@ -69,12 +83,16 @@ def reporte_ventas(
     ventas_por_dia = [{"fecha": f, "total": round(t, 2)} for f, t in sorted(por_dia.items())]
 
     
-    # Por método de pago
+    # Por método de pago — suma los montos REALES pagados en cada método
+    # (tabla pagos), no el total completo de la venta bajo "mixto".
     por_metodo = {"efectivo": 0.0, "tarjeta": 0.0, "transferencia": 0.0, "cheque": 0.0, "mixto": 0.0}
-    for v in ventas:
-        metodo = v["metodo_pago_principal"]
+    for p in pagos_ventas:
+        metodo = p["metodo"]
+        monto = float(p["monto"] or 0)
         if metodo in por_metodo:
-            por_metodo[metodo] += float(v["total"] or 0)
+            por_metodo[metodo] += monto
+        else:
+            por_metodo["mixto"] += monto
     por_metodo = {k: round(v, 2) for k, v in por_metodo.items()}
 
     # Por cajero

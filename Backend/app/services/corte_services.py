@@ -25,21 +25,22 @@ def corte_por_caja_dia(caja_id: str, sucursal_id: str, fecha: str) -> dict:
     """
     Calcula el corte de una caja en un día específico (al vuelo, desde las ventas).
     No depende de la tabla 'cortes'. Solo cuenta ventas completadas.
-    Incluye el detalle de cada turno (abierto/cerrado) de esa caja en el día.
+    Incluye el detalle de cada turno (abierto/cerrado) de esa caja en el día,
+    con sus propios totales (para el desglose por turno, distinto del
+    desglose por caja).
     """
     inicio, fin = _rango_dia(fecha)
 
     # 1. Ventas completadas de esa caja en ese día
     ventas = (
         supabase.table("ventas")
-        .select("id, total, estado, metodo_pago_principal, creado_en")
+        .select("id, total, estado, metodo_pago_principal, creado_en, turno_id")
         .eq("sucursal_id", sucursal_id)
         .eq("caja_id", caja_id)
         .gte("creado_en", inicio)
         .lt("creado_en", fin)
         .execute()
     ).data or []
-
     completadas = [v for v in ventas if v["estado"] == "completada"]
     canceladas  = [v for v in ventas if v["estado"] == "cancelada"]
 
@@ -51,6 +52,24 @@ def corte_por_caja_dia(caja_id: str, sucursal_id: str, fecha: str) -> dict:
         "transferencia": 0.0, "cheque": 0.0, "mixto": 0.0,
     }
     efectivo_neto = 0.0  # efectivo real en caja (monto - cambio)
+
+    # Mapa venta_id -> turno_id, para poder atribuir cada pago a su turno
+    turno_por_venta = {v["id"]: v.get("turno_id") for v in completadas}
+
+    # Acumuladores por turno (para el desglose por turno)
+    por_turno_ventas: dict[str, dict] = {}
+
+    def _bucket_turno(turno_id_venta: str | None) -> dict:
+        if turno_id_venta not in por_turno_ventas:
+            por_turno_ventas[turno_id_venta] = {
+                "total_general": 0.0, "num_tickets": 0, "efectivo_neto": 0.0,
+            }
+        return por_turno_ventas[turno_id_venta]
+
+    for v in completadas:
+        b = _bucket_turno(v.get("turno_id"))
+        b["total_general"] += float(v["total"] or 0)
+        b["num_tickets"] += 1
 
     if ids_completadas:
         pagos = (
@@ -70,22 +89,47 @@ def corte_por_caja_dia(caja_id: str, sucursal_id: str, fecha: str) -> dict:
                 totales_metodo["mixto"] += monto
             if metodo == "efectivo":
                 efectivo_neto += (monto - cambio)
+                turno_de_venta = turno_por_venta.get(p["venta_id"])
+                _bucket_turno(turno_de_venta)["efectivo_neto"] += (monto - cambio)
 
-    # 3. Turnos de esa caja en ese día → fondo, movimientos y ESTADO
-    # (RF-11.1: puede haber más de un turno por caja en el mismo día)
+    # 3. Turnos de esa caja "relevantes" para este día: un turno puede
+    # haberse abierto en un día anterior y seguir abierto (o cerrarse)
+    # hoy — filtrar solo por "inicio dentro del día" lo excluía aunque
+    # tuviera ventas hoy, dejando esas ventas sin turno visible en el
+    # desglose. Se incluye un turno si: sigue abierto, O su cierre cae
+    # hoy, O su inicio cae hoy (cualquiera de los tres casos).
+    turnos_ids_con_ventas_hoy = {v["turno_id"] for v in ventas if v.get("turno_id")}
+
     turnos = (
         supabase.table("turnos")
         .select("id, inicio, cierre, estado, usuarios(nombre_completo)")
         .eq("caja_id", caja_id)
-        .gte("inicio", inicio)
-        .lt("inicio", fin)
+        .or_(f"estado.eq.abierto,and(cierre.gte.{inicio},cierre.lt.{fin}),and(inicio.gte.{inicio},inicio.lt.{fin})")
         .order("inicio")
         .execute()
     ).data or []
 
+    # Red de seguridad: si por alguna razón un turno con ventas hoy no
+    # quedó incluido arriba (caso extremo), lo agregamos igual para que
+    # ninguna venta del día quede huérfana en el desglose por turno.
+    ids_turnos_traidos = {t["id"] for t in turnos}
+    faltantes = turnos_ids_con_ventas_hoy - ids_turnos_traidos
+    if faltantes:
+        extra = (
+            supabase.table("turnos")
+            .select("id, inicio, cierre, estado, usuarios(nombre_completo)")
+            .in_("id", list(faltantes))
+            .execute()
+        ).data or []
+        turnos.extend(extra)
+        turnos.sort(key=lambda t: t["inicio"])
+
     fondo_inicial = 0.0
     entradas_efectivo = 0.0
     salidas_efectivo = 0.0
+
+    # Movimientos de caja por turno (para el desglose por turno)
+    movimientos_por_turno: dict[str, dict] = {}
 
     ids_turnos = [t["id"] for t in turnos]
     if ids_turnos:
@@ -101,15 +145,23 @@ def corte_por_caja_dia(caja_id: str, sucursal_id: str, fecha: str) -> dict:
         for m in movimientos:
             por_turno.setdefault(m["turno_id"], []).append(m)
 
-        for movs_turno in por_turno.values():
+        for turno_id_mov, movs_turno in por_turno.items():
             entradas = [m for m in movs_turno if m["tipo_movimiento"] == "entrada"]
             salidas  = [m for m in movs_turno if m["tipo_movimiento"] == "salida"]
 
-            if entradas:
-                fondo_inicial += float(entradas[0]["monto"] or 0)
-                entradas_efectivo += sum(float(m["monto"] or 0) for m in entradas[1:])
+            fondo_turno = float(entradas[0]["monto"] or 0) if entradas else 0.0
+            entradas_manual_turno = sum(float(m["monto"] or 0) for m in entradas[1:])
+            salidas_turno = sum(float(m["monto"] or 0) for m in salidas)
 
-            salidas_efectivo += sum(float(m["monto"] or 0) for m in salidas)
+            movimientos_por_turno[turno_id_mov] = {
+                "fondo_inicial": fondo_turno,
+                "entradas": entradas_manual_turno,
+                "salidas": salidas_turno,
+            }
+
+            fondo_inicial += fondo_turno
+            entradas_efectivo += entradas_manual_turno
+            salidas_efectivo += salidas_turno
 
     # 4. Efectivo esperado en caja
     efectivo_esperado = fondo_inicial + efectivo_neto + entradas_efectivo - salidas_efectivo
@@ -123,12 +175,23 @@ def corte_por_caja_dia(caja_id: str, sucursal_id: str, fecha: str) -> dict:
         usuario_data = t.get("usuarios") or {}
         if t["estado"] == "abierto":
             hay_turno_abierto = True
+
+        ventas_turno = por_turno_ventas.get(t["id"], {"total_general": 0.0, "num_tickets": 0, "efectivo_neto": 0.0})
+        mov_turno = movimientos_por_turno.get(t["id"], {"fondo_inicial": 0.0, "entradas": 0.0, "salidas": 0.0})
+        efectivo_esperado_turno = (
+            mov_turno["fondo_inicial"] + ventas_turno["efectivo_neto"]
+            + mov_turno["entradas"] - mov_turno["salidas"]
+        )
+
         turnos_detalle.append({
             "id": t["id"],
             "inicio": t["inicio"],
             "cierre": t.get("cierre"),
             "estado": t["estado"],
             "cajero_nombre": usuario_data.get("nombre_completo") or "—",
+            "total_general": round(ventas_turno["total_general"], 2),
+            "num_tickets": ventas_turno["num_tickets"],
+            "efectivo_esperado": round(efectivo_esperado_turno, 2),
         })
 
     return {
@@ -181,10 +244,15 @@ def corte_consolidado_dia(sucursal_id: str, fecha: str) -> dict:
     }
     efectivo_esperado_consolidado = 0.0
 
+    todos_los_turnos = []
+
     for caja in cajas:
         corte_caja = corte_por_caja_dia(caja["id"], sucursal_id, fecha)
         corte_caja["caja_nombre"] = caja["nombre"]
         desglose_cajas.append(corte_caja)
+
+        for t in corte_caja["turnos_detalle"]:
+            todos_los_turnos.append({**t, "caja_nombre": caja["nombre"]})
 
         total_general += corte_caja["total_general"]
         total_tickets += corte_caja["num_tickets"]
@@ -197,6 +265,9 @@ def corte_consolidado_dia(sucursal_id: str, fecha: str) -> dict:
         for metodo, monto in corte_caja["totales_metodo"].items():
             totales_metodo_consolidado[metodo] += monto
 
+    # Ordenar todos los turnos por hora de inicio, sin importar la caja
+    todos_los_turnos.sort(key=lambda t: t["inicio"])
+
     return {
         "fecha": fecha,
         "total_general": round(total_general, 2),
@@ -207,4 +278,5 @@ def corte_consolidado_dia(sucursal_id: str, fecha: str) -> dict:
         "totales_metodo": {k: round(v, 2) for k, v in totales_metodo_consolidado.items()},
         "efectivo_esperado_total": round(efectivo_esperado_consolidado, 2),
         "cajas": desglose_cajas,
+        "turnos": todos_los_turnos,
     }

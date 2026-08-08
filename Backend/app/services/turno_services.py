@@ -69,17 +69,32 @@ def obtener_resumen_turno(turno_id: str, sucursal_id: str) -> dict:
 
     ventas = (
         supabase.table("ventas")
-        .select("total, metodo_pago_principal")
+        .select("id, total, metodo_pago_principal")
         .eq("turno_id", turno_id)
         .eq("estado", "completada")
         .execute()
     ).data or []
 
+    # El desglose por método debe sumar los montos REALES pagados en cada
+    # método (tabla pagos, RF-06.4), no el total completo de la venta bajo
+    # "mixto" — antes una venta pagada mitad efectivo/mitad tarjeta se
+    # contaba entera como "mixto", sin reflejar cuánto fue de cada una.
     totales = {"efectivo": 0.0, "tarjeta": 0.0, "cheque": 0.0, "transferencia": 0.0, "mixto": 0.0}
-    for v in ventas:
-        metodo = v["metodo_pago_principal"]
-        if metodo in totales:
-            totales[metodo] += float(v["total"])
+    venta_ids = [v["id"] for v in ventas]
+    if venta_ids:
+        pagos_ventas = (
+            supabase.table("pagos")
+            .select("venta_id, metodo, monto, cambio")
+            .in_("venta_id", venta_ids)
+            .execute()
+        ).data or []
+        for p in pagos_ventas:
+            metodo = p["metodo"]
+            monto  = float(p["monto"] or 0)
+            if metodo in totales:
+                totales[metodo] += monto
+            else:
+                totales["mixto"] += monto
 
     movimientos = (
         supabase.table("movimientos_caja")

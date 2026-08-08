@@ -120,11 +120,18 @@ def obtener_usuario(usuario_id: str, sucursal_id: str) -> dict:
     return _aplanar_permisos_del_rol(respuesta.data)
 
 
-def actualizar_usuario(usuario_id: str, datos: dict, sucursal_id: str) -> dict:
+def actualizar_usuario(
+    usuario_id: str, datos: dict, sucursal_id: str, generar_nuevo_token: bool = False,
+) -> dict:
     """
-    Si el body trae algún perm_*, se crea un rol NUEVO con los permisos
-    resultantes (los no enviados conservan su valor actual) y se reasigna
-    rol_id. El rol anterior no se borra, queda disponible/huérfano.
+    Si el body trae algún perm_*, se actualiza EL MISMO rol que ya tiene
+    asignado el usuario (un rol = un usuario, siempre) — no se crea uno
+    nuevo ni se dejan huérfanos en la tabla roles.
+
+    Si generar_nuevo_token=True (el usuario en sesión se edita a sí
+    mismo), se genera un JWT con los permisos actualizados y se agrega
+    como 'nuevo_token' en la respuesta, para refrescar la sesión sin
+    necesidad de volver a iniciar sesión.
     """
     permisos_enviados = {p: datos.pop(p) for p in PERMISOS if datos.get(p) is not None}
     cambios = {k: v for k, v in datos.items() if v is not None}
@@ -134,15 +141,26 @@ def actualizar_usuario(usuario_id: str, datos: dict, sucursal_id: str) -> dict:
         permisos_finales = {p: actual[p] for p in PERMISOS}
         permisos_finales.update(permisos_enviados)
 
-        nombre_para_rol = cambios.get("nombre_usuario", actual["nombre_usuario"])
-        nuevo_rol_id = _crear_rol_para_usuario(nombre_para_rol, sucursal_id, permisos_finales)
-        cambios["rol_id"] = nuevo_rol_id
+        supabase.table("roles").update(permisos_finales).eq("id", str(actual["rol_id"])).execute()
 
-    if not cambios:
-        return obtener_usuario(usuario_id, sucursal_id)
+    if cambios:
+        supabase.table("usuarios").update(cambios).eq("id", usuario_id).eq("sucursal_id", sucursal_id).execute()
 
-    supabase.table("usuarios").update(cambios).eq("id", usuario_id).eq("sucursal_id", sucursal_id).execute()
-    return obtener_usuario(usuario_id, sucursal_id)
+    resultado = obtener_usuario(usuario_id, sucursal_id)
+    if generar_nuevo_token:
+        from app.services.auth_services import generar_token
+        payload = {
+            "usuario_id": usuario_id,
+            "nombre_usuario": resultado["nombre_usuario"],
+            "nombre_completo": resultado["nombre_completo"],
+            "sucursal_id": sucursal_id,
+            "rol_id": str(resultado["rol_id"]),
+        }
+        for p in PERMISOS:
+            payload[p] = bool(resultado.get(p, False))
+        resultado["nuevo_token"] = generar_token(payload)
+
+    return resultado
 
 
 def cambiar_estado_usuario(usuario_id: str, activo: bool, sucursal_id: str) -> dict:

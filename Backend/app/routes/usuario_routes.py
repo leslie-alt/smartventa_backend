@@ -43,10 +43,17 @@ def actualizar_usuario(
     datos: UsuarioUpdate,
     usuario: dict = Depends(verificar_permiso("perm_administrar")),
 ):
+    """
+    Si el usuario en sesión edita SUS PROPIOS permisos, se le devuelve un
+    JWT nuevo con los permisos actualizados (nuevo_token en la respuesta),
+    para que no tenga que cerrar sesión y volver a entrar.
+    """
+    es_autoedicion = str(usuario_id) == usuario["usuario_id"]
     return usuario_services.actualizar_usuario(
         usuario_id=str(usuario_id),
         datos=datos.model_dump(exclude_none=True),
         sucursal_id=usuario["sucursal_id"],
+        generar_nuevo_token=es_autoedicion,
     )
 
 
