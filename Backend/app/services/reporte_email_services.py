@@ -487,16 +487,18 @@ def enviar_reporte_destinatario(destinatario: dict, sucursal_id: str, forzar_fre
     ventas = None
     if destinatario["recibe_ventas"]:
         if frecuencia_usada == "semanal":
-            # Semana pasada completa: lunes a domingo anteriores a hoy.
-            fin_semana = hoy - timedelta(days=1)            # domingo pasado
-            inicio_semana = fin_semana - timedelta(days=6)  # lunes pasado
+            # Semana actual: del lunes de esta semana hasta hoy (domingo).
+            dias_desde_lunes = hoy.weekday()  # lunes=0 ... domingo=6
+            inicio_semana = hoy - timedelta(days=dias_desde_lunes)
             inicio = inicio_semana.isoformat()
-            fin_para_ventas = fin_semana.isoformat()
+            fin_para_ventas = fecha_str
         else:
             inicio = fecha_str
             fin_para_ventas = fecha_str
         ventas = reporte_services.reporte_ventas(sucursal_id, inicio, fin_para_ventas)
 
+
+    
     pdf_bytes = _armar_pdf(sucursal_nombre, fecha_str, corte, ventas)
     html = _armar_html(sucursal_nombre, fecha_str, corte, ventas)
 
@@ -514,11 +516,9 @@ def enviar_reportes_pendientes():
     """
     Recorre todos los destinatarios activos y envía lo que les corresponda
     hoy: el diario (si tienen recibe_diario) todos los días, y el semanal
-    (si tienen recibe_semanal) solo los sábados. Un destinatario puede
-    recibir ambos el mismo día si tiene las dos casillas activas.
-    Pensado para llamarse una vez al día desde el scheduler.
+    (si tienen recibe_semanal) solo los domingos.
     """
-    es_sabado = date.today().weekday() == 5  # 5 = sábado
+    es_domingo = date.today().weekday() == 6  # lunes=0 ... domingo=6
 
     destinatarios = (
         supabase.table("destinatarios_reportes")
@@ -536,11 +536,10 @@ def enviar_reportes_pendientes():
             except Exception as e:
                 errores.append({"correo": d["correo"], "tipo": "diario", "error": str(e)})
 
-        if d.get("recibe_semanal") and es_sabado:
+        if d.get("recibe_semanal") and es_domingo:
             try:
                 enviar_reporte_destinatario(d, d["sucursal_id"], forzar_frecuencia="semanal")
                 enviados += 1
             except Exception as e:
                 errores.append({"correo": d["correo"], "tipo": "semanal", "error": str(e)})
-
     return {"enviados": enviados, "errores": errores}

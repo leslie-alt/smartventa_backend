@@ -16,11 +16,13 @@ router = APIRouter()
 def listar_turnos(
     caja_id: UUID,
     fecha: Optional[str] = None,
-    usuario: dict = Depends(verificar_permiso("perm_corte_caja")),
+    usuario: dict = Depends(obtener_usuario_actual),
 ):
     return turno_services.listar_turnos(
         caja_id=str(caja_id),
         sucursal_id=usuario["sucursal_id"],
+        usuario_id=usuario["usuario_id"],
+        tiene_perm_corte_caja=usuario.get("perm_corte_caja", False),
         fecha=fecha,
     )
 
@@ -76,10 +78,13 @@ def turno_activo(
 @router.post("/{turno_id}/cerrar", response_model=TurnoOut)
 def cerrar_turno(
     turno_id: UUID,
-    usuario: dict = Depends(verificar_permiso("perm_corte_caja")),
+    usuario: dict = Depends(obtener_usuario_actual),
 ):
-    """Cierra un turno abierto. Requiere permiso perm_corte_caja."""
+    """Cierra un turno. Cualquier usuario puede cerrar su propio turno;
+    cerrar el turno de otro usuario requiere perm_corte_caja."""
     return turno_services.cerrar_turno(
         turno_id=str(turno_id),
         sucursal_id=usuario["sucursal_id"],
+        usuario_id=usuario["usuario_id"],
+        tiene_perm_corte_caja=usuario.get("perm_corte_caja", False),
     )

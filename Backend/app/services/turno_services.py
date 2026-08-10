@@ -1,5 +1,6 @@
 # turno_services.py
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
 
@@ -67,6 +68,18 @@ def obtener_resumen_turno(turno_id: str, sucursal_id: str) -> dict:
     turno = obtener_turno(turno_id)
     caja_services.obtener_caja(turno["caja_id"], sucursal_id)
 
+    # Nombre del cajero dueño del turno — se resuelve aquí (con service_key,
+    # sin restricción de permiso) para que cualquiera que vea este resumen
+    # obtenga el nombre correcto, sin depender de /usuarios/ (que requiere
+    # perm_administrar y le fallaba a los cajeros normales).
+    usuario_turno = (
+        supabase.table("usuarios")
+        .select("nombre_completo")
+        .eq("id", turno["usuario_id"])
+        .single()
+        .execute()
+    ).data or {}
+    turno["cajero_nombre"] = usuario_turno.get("nombre_completo")
     ventas = (
         supabase.table("ventas")
         .select("id, total, metodo_pago_principal")
@@ -163,14 +176,27 @@ def obtener_turno_activo(caja_id: str, sucursal_id: str) -> dict | None:
     return respuesta.data[0] if respuesta.data else None
 
 
-def cerrar_turno(turno_id: str, sucursal_id: str) -> dict:
-    """Cierra un turno abierto (RF-11.1). Requiere perm_corte_caja, validado en el router."""
+def cerrar_turno(
+    turno_id: str, sucursal_id: str, usuario_id: str, tiene_perm_corte_caja: bool,
+) -> dict:
+    """
+    Cierra un turno abierto (RF-11.1). Cualquier usuario puede cerrar SU
+    PROPIO turno; cerrar el turno de otro usuario requiere perm_corte_caja
+    (por ejemplo, una supervisora cerrando el turno de un cajero que ya
+    se fue sin cerrar).
+    """
     turno = obtener_turno(turno_id)
     caja_services.obtener_caja(turno["caja_id"], sucursal_id)  # valida sucursal
 
-    if turno["estado"] == "cerrado":
-        raise HTTPException(status_code=409, detail="El turno ya está cerrado.")
+    es_propio = str(turno["usuario_id"]) == str(usuario_id)
+    if not es_propio and not tiene_perm_corte_caja:
+        raise HTTPException(
+            status_code=403,
+            detail="No tienes permiso para cerrar el turno de otro usuario.",
+        )
 
+    if turno["estado"] == "cerrado":
+       raise HTTPException(status_code=409, detail="El turno ya está cerrado.")
     respuesta = (
         supabase.table("turnos")
         .update({
@@ -185,8 +211,15 @@ def cerrar_turno(turno_id: str, sucursal_id: str) -> dict:
     return respuesta.data[0]
 
 
-def listar_turnos(caja_id: str, sucursal_id: str, fecha: str | None = None) -> dict:
-    """Lista turnos de una caja, opcionalmente filtrados por fecha (YYYY-MM-DD)."""
+def listar_turnos(
+    caja_id: str, sucursal_id: str, usuario_id: str, tiene_perm_corte_caja: bool,
+    fecha: str | None = None,
+) -> dict:
+    """
+    Lista turnos de una caja, opcionalmente filtrados por fecha (YYYY-MM-DD).
+    Quien tiene perm_corte_caja ve todos los turnos de la caja; quien no,
+    solo ve sus propios turnos.
+    """
     query = (
         supabase.table("turnos")
         .select("id, inicio, cierre, estado, usuario_id")
@@ -194,8 +227,17 @@ def listar_turnos(caja_id: str, sucursal_id: str, fecha: str | None = None) -> d
         .order("inicio", desc=True)
     )
     if fecha:
-        # Filtrar por día completo en UTC
-        query = query.gte("inicio", f"{fecha}T00:00:00Z").lt("inicio", f"{fecha}T23:59:59Z")
+        # El día completo se calcula en hora de México y se convierte a UTC
+        # para el filtro — igual que en reporte_services._rango_fechas().
+        d = datetime.strptime(fecha, "%Y-%m-%d").date()
+        tz_mexico = ZoneInfo("America/Mexico_City")
+        inicio_mx = datetime(d.year, d.month, d.day, 0, 0, 0, tzinfo=tz_mexico)
+        fin_mx = inicio_mx + timedelta(days=1)
+        inicio_utc = inicio_mx.astimezone(timezone.utc).isoformat()
+        fin_utc = fin_mx.astimezone(timezone.utc).isoformat()
+        query = query.gte("inicio", inicio_utc).lt("inicio", fin_utc)
+    if not tiene_perm_corte_caja:
+        query = query.eq("usuario_id", usuario_id)
 
     respuesta = query.limit(20).execute()
     return {"items": respuesta.data or []}
