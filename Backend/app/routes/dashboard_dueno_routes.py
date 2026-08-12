@@ -7,15 +7,27 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query
 
 from app.core.deps import verificar_permiso
-from app.models.dashboard_dueno_model import ResumenDueno, DetalleVenta
+
+from app.models.dashboard_dueno_model import ResumenDueno, DetalleVenta, TurnoDia
 from app.services.dashboard_dueno_services import (
     obtener_resumen_dueno,
     listar_ventas_dia,
     obtener_detalle_venta,
     listar_productos_faltantes,
+    listar_turnos_dia,
 )
 
 router = APIRouter(prefix="/dashboard-dueno", tags=["Dashboard Dueña"])
+
+
+@router.get("/turnos-dia")
+async def turnos_dia(
+    usuario: dict = Depends(verificar_permiso("perm_dueno")),
+    sucursal_id: UUID = Query(..., description="Obligatorio: esta vista no existe en modo consolidado"),
+    fecha: date = Query(default_factory=date.today),
+) -> dict:
+    """Historial de turnos del día (abiertos y cerrados) de una sucursal específica."""
+    return listar_turnos_dia(sucursal_id=str(sucursal_id), fecha=fecha.isoformat())
 
 
 @router.get("/resumen", response_model=ResumenDueno)

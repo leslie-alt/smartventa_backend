@@ -10,7 +10,7 @@ from app.core.database import supabase
 from app.models.dashboard_dueno_model import ResumenDueno, ResumenSucursal
 
 CAMPOS_SUMABLES = [
-    "dinero_actual", "ventas_bruto", "descuentos_total", "ventas_neto",
+    "dinero_actual", "dinero_total_dia", "ventas_bruto", "descuentos_total", "ventas_neto",
     "ventas_cantidad", "ganancia", "entradas", "salidas",
     "devoluciones_total", "devoluciones_cantidad", "canceladas_cantidad",
     "alertas_inventario_cantidad", "venta_semana_pasada",
@@ -159,6 +159,19 @@ def listar_productos_faltantes(sucursal_id: str | None) -> dict:
     para la pantalla dedicada — distinta del preview de 5 en el resumen."""
     resultado = supabase.rpc(
         "listar_productos_faltantes", {"p_sucursal_id": sucursal_id}
+    ).execute()
+    items = resultado.data or []
+    return {"items": items, "total": len(items)}
+
+
+def listar_turnos_dia(sucursal_id: str, fecha: str) -> dict:
+    """Historial de turnos del día (abiertos y cerrados) por caja,
+    con su efectivo esperado individual — para la pantalla dedicada
+    Cajas y Turnos. Solo aplica consultada por sucursal específica
+    (RF-14.2); no tiene sentido en modo consolidado, donde 'caja'
+    pierde su identidad."""
+    resultado = supabase.rpc(
+        "listar_turnos_dia", {"p_sucursal_id": sucursal_id, "p_fecha": fecha}
     ).execute()
     items = resultado.data or []
     return {"items": items, "total": len(items)}

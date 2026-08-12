@@ -33,6 +33,7 @@ class ResumenSucursal(BaseModel):
     sucursal_id: UUID
     sucursal_nombre: str
     dinero_actual: float
+    dinero_total_dia: float
     ventas_bruto: float
     descuentos_total: float
     ventas_neto: float
@@ -88,3 +89,18 @@ class ProductoFaltante(BaseModel):
     inventario_minimo: int
     sucursal_id: UUID
     sucursal_nombre: str
+
+
+class TurnoDia(BaseModel):
+    turno_id: UUID
+    caja_id: UUID
+    caja_nombre: str
+    usuario_nombre: str
+    estado: str
+    inicio: str
+    cierre: str | None = None
+    efectivo_turno: float
+    entradas: float
+    salidas: float
+    ventas_cantidad: int
+    ventas_total: float
