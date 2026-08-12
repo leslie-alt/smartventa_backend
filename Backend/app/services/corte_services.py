@@ -88,9 +88,13 @@ def corte_por_caja_dia(caja_id: str, sucursal_id: str, fecha: str) -> dict:
             else:
                 totales_metodo["mixto"] += monto
             if metodo == "efectivo":
-                efectivo_neto += (monto - cambio)
+                # "monto" ya es el precio real de la venta (no lo recibido
+                # físicamente) — el cambio ya está implícitamente descontado
+                # ahí. Restar "cambio" otra vez duplicaba el descuento y
+                # subestimaba el efectivo esperado en cada venta con cambio.
+                efectivo_neto += monto
                 turno_de_venta = turno_por_venta.get(p["venta_id"])
-                _bucket_turno(turno_de_venta)["efectivo_neto"] += (monto - cambio)
+                _bucket_turno(turno_de_venta)["efectivo_neto"] += monto
 
     # 3. Turnos de esa caja "relevantes" para este día: un turno puede
     # haberse abierto en un día anterior y seguir abierto (o cerrarse)
